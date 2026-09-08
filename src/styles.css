@@ -995,3 +995,67 @@ button {
   background: rgb(35 32 28 / 62%);
   border-radius: 4px;
 }
+
+/* ---------- 快捷鍵說明 ---------- */
+
+.settings__link {
+  align-self: flex-start;
+  padding: 0.4rem 0;
+  font-size: 0.8125rem;
+  color: var(--accent);
+}
+
+.settings__link:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+
+.help h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.125rem;
+  font-weight: 500;
+}
+
+.help__list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.help__row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.help__row dt {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: 7rem;
+  flex-shrink: 0;
+}
+
+.help__row dd {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+}
+
+.help__sep {
+  font-size: 0.75rem;
+  color: var(--ink-faint);
+}
+
+kbd {
+  padding: 0.15rem 0.4rem;
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+}
