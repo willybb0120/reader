@@ -128,6 +128,7 @@ export function useBook() {
 
   return {
     book,
+    bookId: book ? bookId(book) : '',
     chapter,
     fragment,
     initialScrollRatio,

@@ -98,6 +98,42 @@ try {
   if (Math.abs(after.y - before.y) > 80) fail(`重新載入後捲動位置差距過大：${before.y} → ${after.y}`)
   await page.screenshot({ path: `${outDir}/06-restored.png` })
 
+  // 劃線：選一段文字 → 工具列 → 黃色劃線 → 出現在側欄
+  await page.evaluate(() => {
+    const paragraph = document.querySelectorAll('.chapter p')[2]
+    const range = document.createRange()
+    range.selectNodeContents(paragraph)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+  })
+  await page.waitForSelector('.selection-toolbar')
+  await page.screenshot({ path: `${outDir}/07-selection.png` })
+  await page.click('[aria-label="黃色劃線"]')
+  await page.waitForSelector('.chapter mark')
+
+  await page.click('[aria-label="劃線與筆記"]')
+  await page.waitForSelector('.annotations')
+  await page.waitForTimeout(400)
+  const marks = await page.$$('.annotation')
+  if (marks.length !== 1) fail(`側欄標註數量錯誤：${marks.length}`)
+  await page.screenshot({ path: `${outDir}/08-annotations.png` })
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+
+  // 重新載入後劃線仍在
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.chapter')
+  await page.waitForTimeout(700)
+  const persisted = await page.$$('.chapter mark')
+  if (persisted.length === 0) fail('重新載入後劃線消失')
+  await page.evaluate(() =>
+    document.querySelector('.chapter mark')?.scrollIntoView({ block: 'center' }),
+  )
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: `${outDir}/09-highlight-persisted.png` })
+
   const errorsToReport = errors.filter((e) => !/favicon|fonts\.g/i.test(e))
   if (errorsToReport.length > 0) fail(`console 錯誤：\n${errorsToReport.join('\n')}`)
 

@@ -38,3 +38,12 @@ export function TypeIcon({ size = 20 }: IconProps) {
     </svg>
   )
 }
+
+export function HighlightIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M4 20h16" />
+      <path d="M9 16l-3 .8.8-3 7.6-7.6a1.6 1.6 0 0 1 2.3 0l.1.1a1.6 1.6 0 0 1 0 2.3z" />
+    </svg>
+  )
+}
