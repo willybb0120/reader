@@ -1,0 +1,12 @@
+{
+  "name": "閱讀器",
+  "short_name": "閱讀器",
+  "description": "本機優先的 EPUB 閱讀器",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#faf7f2",
+  "theme_color": "#faf7f2",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
