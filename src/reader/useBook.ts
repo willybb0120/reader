@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { bundledBooks } from 'virtual:books'
 import { parseEpub, type Book, type Chapter } from '../epub/parseEpub'
 import { loadProgress, overallProgress, remainingMinutes, saveProgress } from '../store/progress'
@@ -25,12 +25,14 @@ export function useBook() {
   const [initialScrollRatio, setInitialScrollRatio] = useState(0)
   const [status, setStatus] = useState<Status>(bundledBooks.length > 0 ? 'loading' : 'idle')
   const [error, setError] = useState('')
-  const [chapterLengths, setChapterLengths] = useState<number[]>([])
+  const [chapterTexts, setChapterTexts] = useState<string[]>([])
+  const [chapterTitles, setChapterTitles] = useState<string[]>([])
   const [progress, setProgress] = useState(0)
   const [minutesLeft, setMinutesLeft] = useState<number | null>(null)
 
   const bookRef = useRef<Book | null>(null)
   const lengthsRef = useRef<number[]>([])
+  const chapterLengths = useMemo(() => chapterTexts.map((text) => text.length), [chapterTexts])
   const chapterRef = useRef<Chapter | null>(null)
   const lastSaveRef = useRef(0)
 
@@ -50,7 +52,8 @@ export function useBook() {
       const raw = await parsed.getChapter(startIndex)
 
       setBook(parsed)
-      setChapterLengths([])
+      setChapterTexts([])
+      setChapterTitles([])
       setFragment(undefined)
       setInitialScrollRatio(saved?.scrollRatio ?? 0)
       setChapter({ ...raw, html: await withTrimmedImages(raw.html) })
@@ -77,12 +80,16 @@ export function useBook() {
     if (!book) return
     let cancelled = false
     void (async () => {
-      const lengths: number[] = []
+      const texts: string[] = []
+      const titles: string[] = []
       for (let i = 0; i < book.spine.length; i++) {
-        lengths.push((await book.getChapterText(i)).length)
+        texts.push(await book.getChapterText(i))
+        titles.push((await book.getChapter(i)).title)
         if (cancelled) return
       }
-      if (!cancelled) setChapterLengths(lengths)
+      if (cancelled) return
+      setChapterTexts(texts)
+      setChapterTitles(titles)
     })()
     return () => {
       cancelled = true
@@ -134,6 +141,8 @@ export function useBook() {
     initialScrollRatio,
     status,
     error,
+    chapterTexts,
+    chapterTitles,
     progress,
     minutesLeft,
     openBook,

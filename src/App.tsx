@@ -8,10 +8,12 @@ import { useSettings } from './store/useSettings'
 import { AnnotationsPanel } from './ui/AnnotationsPanel'
 import { NoteDialog } from './ui/NoteDialog'
 import { SettingsPanel } from './ui/SettingsPanel'
+import { SearchPanel } from './ui/SearchPanel'
 import { Toc } from './ui/Toc'
-import { HighlightIcon, ListIcon, TypeIcon } from './ui/icons'
+import { HighlightIcon, ListIcon, SearchIcon, TypeIcon } from './ui/icons'
+import type { SearchHit } from './reader/search'
 
-type Panel = 'toc' | 'settings' | 'annotations' | null
+type Panel = 'toc' | 'search' | 'settings' | 'annotations' | null
 
 export function App() {
   const {
@@ -22,6 +24,8 @@ export function App() {
     initialScrollRatio,
     status,
     error,
+    chapterTexts,
+    chapterTitles,
     progress,
     minutesLeft,
     openBook,
@@ -36,6 +40,7 @@ export function App() {
   const [active, setActive] = useState<{ id: string; rect: DOMRect } | null>(null)
   const [editingNote, setEditingNote] = useState<Annotation | null>(null)
   const [focusAnnotationId, setFocusAnnotationId] = useState<string | undefined>()
+  const [focusRange, setFocusRange] = useState<{ start: number; end: number } | undefined>()
 
   const chapterAnnotations = useMemo(
     () => (chapter ? (byChapter.get(chapter.index) ?? []) : []),
@@ -53,6 +58,7 @@ export function App() {
     (index: number, target?: string) => {
       setPanel(null)
       setFocusAnnotationId(undefined)
+      setFocusRange(undefined)
       void goToChapter(index, target)
     },
     [goToChapter],
@@ -139,8 +145,16 @@ export function App() {
     URL.revokeObjectURL(url)
   }
 
+  const openHit = (hit: SearchHit) => {
+    setPanel(null)
+    setFocusAnnotationId(undefined)
+    setFocusRange({ start: hit.start, end: hit.end })
+    if (hit.chapterIndex !== chapter?.index) void goToChapter(hit.chapterIndex)
+  }
+
   const openAnnotation = (annotation: Annotation) => {
     setPanel(null)
+    setFocusRange(undefined)
     setFocusAnnotationId(annotation.id)
     if (annotation.chapterIndex !== chapter?.index) {
       void goToChapter(annotation.chapterIndex)
@@ -165,6 +179,15 @@ export function App() {
           disabled={!book}
         >
           <ListIcon />
+        </button>
+        <button
+          className="icon-button"
+          onClick={() => setPanel('search')}
+          aria-label="搜尋全書"
+          aria-pressed={panel === 'search'}
+          disabled={!book}
+        >
+          <SearchIcon />
         </button>
         <div className="topbar__title">{chapter?.title ?? book?.metadata.title ?? '閱讀器'}</div>
         <button
@@ -227,6 +250,7 @@ export function App() {
             scrollToFragment={fragment}
             initialScrollRatio={initialScrollRatio}
             focusAnnotationId={focusAnnotationId}
+            focusRange={focusRange}
           />
           <nav className="chapter-nav">
             <button onClick={() => navigate(chapter.index - 1)} disabled={chapter.index === 0}>
@@ -290,6 +314,15 @@ export function App() {
           onOpen={openAnnotation}
           onRemove={remove}
           onExport={exportMarkdown}
+          onClose={() => setPanel(null)}
+        />
+      )}
+
+      {panel === 'search' && book && (
+        <SearchPanel
+          chapterTexts={chapterTexts}
+          chapterTitle={(index) => chapterTitles[index] ?? `第 ${index + 1} 節`}
+          onOpen={openHit}
           onClose={() => setPanel(null)}
         />
       )}

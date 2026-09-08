@@ -78,8 +78,7 @@ export function wrapRange(
   root: Node,
   start: number,
   end: number,
-  annotationId: string,
-  color?: string,
+  dataset: Record<string, string>,
 ): HTMLElement[] {
   const marks: HTMLElement[] = []
   let consumed = 0
@@ -92,14 +91,13 @@ export function wrapRange(
     const from = Math.max(start, nodeStart)
     const to = Math.min(end, nodeEnd)
     if (from >= to) continue
-    if (node.parentElement?.dataset.annotation) continue
+    if (node.parentElement?.tagName === 'MARK') continue
 
     const middle = node.splitText(from - nodeStart)
     middle.splitText(to - from)
 
     const mark = document.createElement('mark')
-    mark.dataset.annotation = annotationId
-    if (color) mark.dataset.color = color
+    Object.assign(mark.dataset, dataset)
     middle.replaceWith(mark)
     mark.appendChild(middle)
     marks.push(mark)

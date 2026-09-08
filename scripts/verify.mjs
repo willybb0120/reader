@@ -134,6 +134,21 @@ try {
   await page.waitForTimeout(300)
   await page.screenshot({ path: `${outDir}/09-highlight-persisted.png` })
 
+  // 搜尋：輸入關鍵字並跳到結果
+  await page.click('[aria-label="搜尋全書"]')
+  await page.waitForSelector('.search__field input:not([disabled])', { timeout: 20000 })
+  await page.fill('.search__field input', '創造')
+  await page.waitForSelector('.search__hit')
+  await page.waitForTimeout(400)
+  const hits = await page.$$('.search__hit')
+  if (hits.length < 5) fail(`搜尋結果過少：${hits.length}`)
+  await page.screenshot({ path: `${outDir}/10-search.png` })
+
+  await hits[2].click()
+  await page.waitForSelector('.chapter mark[data-search-hit]')
+  await page.waitForTimeout(400)
+  await page.screenshot({ path: `${outDir}/11-search-hit.png` })
+
   const errorsToReport = errors.filter((e) => !/favicon|fonts\.g/i.test(e))
   if (errorsToReport.length > 0) fail(`console 錯誤：\n${errorsToReport.join('\n')}`)
 

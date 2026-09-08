@@ -782,3 +782,83 @@ button {
   font-size: 0.875rem;
   color: var(--ink-soft);
 }
+
+/* ---------- 搜尋 ---------- */
+
+.search__field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.875rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.search__field input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.55rem 0.75rem;
+  font: inherit;
+  font-size: 0.9375rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+
+.search__field input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.search__count {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.search__results {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 2rem;
+}
+
+.search__hit {
+  display: block;
+  width: 100%;
+  padding: 0.7rem 1.25rem;
+  text-align: start;
+  border-bottom: 1px solid var(--rule);
+}
+
+.search__hit:hover {
+  background: var(--accent-soft);
+}
+
+.search__hit-chapter {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+}
+
+.search__hit-text {
+  display: block;
+  font-family: var(--serif);
+  font-size: 0.875rem;
+  line-height: 1.75;
+  color: var(--ink-soft);
+}
+
+.search__hit-text em {
+  font-style: normal;
+  color: var(--ink);
+  background: linear-gradient(to top, var(--hl-yellow) 0.5em, transparent 0.5em);
+}
+
+.chapter mark[data-search-hit] {
+  --hl: var(--accent-soft);
+  outline: 1px solid var(--accent);
+  border-radius: 2px;
+}
