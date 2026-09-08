@@ -208,6 +208,18 @@ try {
   await phone.screenshot({ path: `${outDir}/17-phone-toc.png` })
   await phone.close()
 
+  // 離線：Service Worker 註冊後斷網仍要能開啟
+  const offlinePage = await browser.newPage()
+  await offlinePage.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' })
+  await offlinePage.evaluate(() => navigator.serviceWorker.ready)
+  await offlinePage.reload({ waitUntil: 'networkidle' })
+  await offlinePage.context().setOffline(true)
+  await offlinePage.reload({ waitUntil: 'load' })
+  await offlinePage.waitForSelector('.library__header', { timeout: 15000 })
+  await offlinePage.screenshot({ path: `${outDir}/18-offline.png` })
+  await offlinePage.context().setOffline(false)
+  await offlinePage.close()
+
   const errorsToReport = errors.filter((e) => !/favicon|fonts\.g/i.test(e))
   if (errorsToReport.length > 0) fail(`console 錯誤：\n${errorsToReport.join('\n')}`)
 
