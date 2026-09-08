@@ -28,6 +28,18 @@ describe('閱讀進度儲存', () => {
     expect(loadProgress('book-1')).toBeNull()
   })
 
+  test('保存全書進度百分比，供書櫃顯示', () => {
+    saveProgress('book-1', { chapterIndex: 2, scrollRatio: 0.5, overall: 0.42 })
+
+    expect(loadProgress('book-1')!.overall).toBeCloseTo(0.42)
+  })
+
+  test('舊資料沒有全書進度時視為 0', () => {
+    localStorage.setItem('reader:progress:book-1', JSON.stringify({ chapterIndex: 1 }))
+
+    expect(loadProgress('book-1')!.overall).toBe(0)
+  })
+
   test('捲動比例夾在 0 到 1 之間', () => {
     saveProgress('book-1', { chapterIndex: 0, scrollRatio: 4.2 })
 

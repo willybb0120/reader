@@ -38,6 +38,8 @@ export interface Book {
   spine: SpineItem[]
   nav: NavItem[]
   coverUrl: string | undefined
+  /** 封面原始資料，供書櫃保存 */
+  coverImage: { data: ArrayBuffer; type: string } | undefined
   getChapter(index: number): Promise<Chapter>
   /** 章節純文字，位移與渲染後的 HTML 一致，供搜尋與進度估算使用 */
   getChapterText(index: number): Promise<string>
@@ -169,6 +171,10 @@ export async function parseEpub(data: Uint8Array | ArrayBuffer): Promise<Book> {
     manifest.get(opf.querySelector('metadata meta[name="cover"]')?.getAttribute('content') ?? '')
       ?.href
   const coverUrl = coverPath ? blobUrlFor(coverPath) : undefined
+  const coverBytes = coverPath ? read(coverPath) : undefined
+  const coverImage = coverBytes
+    ? { data: coverBytes.slice().buffer as ArrayBuffer, type: mimeFor(coverPath!) }
+    : undefined
 
   const nav = buildNav()
 
@@ -317,6 +323,7 @@ export async function parseEpub(data: Uint8Array | ArrayBuffer): Promise<Book> {
     spine,
     nav,
     coverUrl,
+    coverImage,
     async getChapter(index) {
       return chapterAt(index)
     },

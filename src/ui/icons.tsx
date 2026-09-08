@@ -56,3 +56,12 @@ export function SearchIcon({ size = 20 }: IconProps) {
     </svg>
   )
 }
+
+export function LibraryIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M4 5.5h5.5v13H4zM10.5 5.5H16v13h-5.5z" />
+      <path d="M17.4 6.2l2.6.7-3.1 11.6-2.6-.7" />
+    </svg>
+  )
+}

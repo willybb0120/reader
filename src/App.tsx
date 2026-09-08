@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Library } from './ui/Library'
+import { useLibrary } from './reader/useLibrary'
 import { ChapterView, type TextSelection } from './reader/ChapterView'
 import { SelectionToolbar } from './reader/SelectionToolbar'
 import { useBook } from './reader/useBook'
@@ -10,15 +12,20 @@ import { NoteDialog } from './ui/NoteDialog'
 import { SettingsPanel } from './ui/SettingsPanel'
 import { SearchPanel } from './ui/SearchPanel'
 import { Toc } from './ui/Toc'
-import { HighlightIcon, ListIcon, SearchIcon, TypeIcon } from './ui/icons'
+import { HighlightIcon, LibraryIcon, ListIcon, SearchIcon, TypeIcon } from './ui/icons'
 import type { SearchHit } from './reader/search'
 
 type Panel = 'toc' | 'search' | 'settings' | 'annotations' | null
 
+const LAST_BOOK_KEY = 'reader:last-book'
+
 export function App() {
+  const [bookId, setBookId] = useState<string | null>(
+    () => localStorage.getItem(LAST_BOOK_KEY) ?? null,
+  )
+  const library = useLibrary()
   const {
     book,
-    bookId,
     chapter,
     fragment,
     initialScrollRatio,
@@ -28,11 +35,10 @@ export function App() {
     chapterTitles,
     progress,
     minutesLeft,
-    openBook,
     goToChapter,
-  } = useBook()
+  } = useBook(bookId)
   const { settings, update: updateSettings } = useSettings()
-  const { annotations, byChapter, add, update, remove } = useAnnotations(bookId)
+  const { annotations, byChapter, add, update, remove } = useAnnotations(bookId ?? '')
 
   const [panel, setPanel] = useState<Panel>(null)
   const [scrolled, setScrolled] = useState(false)
@@ -161,9 +167,21 @@ export function App() {
     }
   }
 
-  const onPickFile = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (file) void openBook(() => file.arrayBuffer())
+  const openFromLibrary = (id: string) => {
+    localStorage.setItem(LAST_BOOK_KEY, id)
+    setBookId(id)
+  }
+
+  const closeBook = () => {
+    localStorage.removeItem(LAST_BOOK_KEY)
+    setBookId(null)
+    void library.refresh()
+  }
+
+  const importFiles = (files: readonly File[]) => {
+    void library.importFiles(files).then((id) => {
+      if (id) openFromLibrary(id)
+    })
   }
 
   const toolbarRect = active?.rect ?? selection?.rect
@@ -171,34 +189,40 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar" data-scrolled={scrolled}>
-        <button
-          className="icon-button"
-          onClick={() => setPanel('toc')}
-          aria-label="開啟目錄"
-          aria-pressed={panel === 'toc'}
-          disabled={!book}
-        >
-          <ListIcon />
-        </button>
-        <button
-          className="icon-button"
-          onClick={() => setPanel('search')}
-          aria-label="搜尋全書"
-          aria-pressed={panel === 'search'}
-          disabled={!book}
-        >
-          <SearchIcon />
-        </button>
-        <div className="topbar__title">{chapter?.title ?? book?.metadata.title ?? '閱讀器'}</div>
-        <button
-          className="icon-button"
-          onClick={() => setPanel('annotations')}
-          aria-label="劃線與筆記"
-          aria-pressed={panel === 'annotations'}
-          disabled={!book}
-        >
-          <HighlightIcon />
-        </button>
+        {book && (
+          <>
+            <button className="icon-button" onClick={closeBook} aria-label="回到書櫃">
+              <LibraryIcon />
+            </button>
+            <button
+              className="icon-button"
+              onClick={() => setPanel('toc')}
+              aria-label="開啟目錄"
+              aria-pressed={panel === 'toc'}
+            >
+              <ListIcon />
+            </button>
+            <button
+              className="icon-button"
+              onClick={() => setPanel('search')}
+              aria-label="搜尋全書"
+              aria-pressed={panel === 'search'}
+            >
+              <SearchIcon />
+            </button>
+          </>
+        )}
+        <div className="topbar__title">{chapter?.title ?? book?.metadata.title ?? ''}</div>
+        {book && (
+          <button
+            className="icon-button"
+            onClick={() => setPanel('annotations')}
+            aria-label="劃線與筆記"
+            aria-pressed={panel === 'annotations'}
+          >
+            <HighlightIcon />
+          </button>
+        )}
         <button
           className="icon-button"
           onClick={() => setPanel('settings')}
@@ -226,17 +250,13 @@ export function App() {
       )}
 
       {(status === 'idle' || status === 'error') && (
-        <div className="state">
-          <h1>選一本書開始閱讀</h1>
-          <p>
-            支援 EPUB 檔案。也可以把書放進 <code>public/books/</code>，重新整理即自動開啟。
-          </p>
-          {error && <div className="state__error">{error}</div>}
-          <label className="file-button">
-            選擇 EPUB
-            <input type="file" accept=".epub" hidden onChange={onPickFile} />
-          </label>
-        </div>
+        <Library
+          books={library.books}
+          error={error || library.error}
+          onOpen={openFromLibrary}
+          onImport={importFiles}
+          onRemove={(id) => void library.remove(id)}
+        />
       )}
 
       {status === 'ready' && book && chapter && (

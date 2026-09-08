@@ -2,6 +2,8 @@ export interface Progress {
   chapterIndex: number
   /** 章節內的捲動位置，0 至 1 */
   scrollRatio: number
+  /** 全書進度，0 至 1。存起來讓書櫃不必重新解析整本書 */
+  overall: number
   updatedAt: number
 }
 
@@ -22,6 +24,7 @@ export function loadProgress(bookId: string): Progress | null {
     return {
       chapterIndex: Math.max(0, Math.trunc(parsed.chapterIndex)),
       scrollRatio: clamp01(parsed.scrollRatio),
+      overall: clamp01(parsed.overall),
       updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
     }
   } catch {
@@ -31,12 +34,13 @@ export function loadProgress(bookId: string): Progress | null {
 
 export function saveProgress(
   bookId: string,
-  progress: Omit<Progress, 'updatedAt'>,
+  progress: Omit<Progress, 'updatedAt' | 'overall'> & { overall?: number },
 ): void {
   try {
     const record: Progress = {
       chapterIndex: Math.max(0, Math.trunc(progress.chapterIndex)),
       scrollRatio: clamp01(progress.scrollRatio),
+      overall: clamp01(progress.overall),
       updatedAt: Date.now(),
     }
     localStorage.setItem(KEY_PREFIX + bookId, JSON.stringify(record))
