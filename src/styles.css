@@ -430,6 +430,7 @@ button {
 .chapter-nav button {
   flex: 1;
   padding: 0.75rem 1rem;
+  white-space: nowrap;
   font-size: 0.875rem;
   color: var(--ink-soft);
   background: var(--paper-raised);
@@ -1058,4 +1059,46 @@ kbd {
   border: 1px solid var(--rule);
   border-bottom-width: 2px;
   border-radius: 5px;
+}
+
+/* ---------- 焦點與窄螢幕 ---------- */
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (max-width: 34rem) {
+  .chapter-nav {
+    flex-wrap: wrap;
+  }
+
+  .chapter-nav__position {
+    order: -1;
+    flex-basis: 100%;
+    padding-bottom: 0.75rem;
+    text-align: center;
+  }
+
+  .reader {
+    padding-top: 1.5rem;
+  }
+
+  .topbar {
+    gap: 0;
+  }
+
+  .icon-button {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .selection-toolbar button {
+    padding: 0.45rem 0.5rem;
+  }
+
+  .library__header h1 {
+    font-size: 1.25rem;
+  }
 }

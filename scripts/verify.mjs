@@ -181,6 +181,33 @@ try {
   if (!percent) fail('書櫃沒有顯示閱讀進度')
   await page.screenshot({ path: `${outDir}/14-library-progress.png` })
 
+  // 手機尺寸檢查：不得出現水平捲動
+  const phone = await browser.newPage({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true,
+  })
+  phone.on('pageerror', (err) => errors.push(err.message))
+  await phone.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' })
+  await phone.waitForSelector('.book-card', { timeout: 20000 })
+  await phone.screenshot({ path: `${outDir}/15-phone-library.png` })
+  await phone.click('.book-card__open')
+  await phone.waitForSelector('.chapter')
+  await phone.waitForTimeout(600)
+  await phone.screenshot({ path: `${outDir}/16-phone-reading.png` })
+
+  const overflow = await phone.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  )
+  if (overflow > 0) fail(`手機版面有 ${overflow}px 水平溢出`)
+
+  await phone.click('[aria-label="開啟目錄"]')
+  await phone.waitForSelector('.drawer')
+  await phone.waitForTimeout(400)
+  await phone.screenshot({ path: `${outDir}/17-phone-toc.png` })
+  await phone.close()
+
   const errorsToReport = errors.filter((e) => !/favicon|fonts\.g/i.test(e))
   if (errorsToReport.length > 0) fail(`console 錯誤：\n${errorsToReport.join('\n')}`)
 
