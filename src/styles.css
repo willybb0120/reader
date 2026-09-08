@@ -102,6 +102,15 @@ button {
   border-bottom-color: var(--rule);
 }
 
+.topbar__progress {
+  position: absolute;
+  inset: auto 0 -1px 0;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: left;
+  transition: transform 0.15s linear;
+}
+
 .topbar__title {
   flex: 1;
   min-width: 0;
@@ -407,6 +416,15 @@ button {
   margin-top: 4rem;
   padding-top: 1.5rem;
   border-top: 1px solid var(--rule);
+}
+
+.chapter-nav__position {
+  align-self: center;
+  padding: 0 0.5rem;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+  white-space: nowrap;
 }
 
 .chapter-nav button {
