@@ -78,6 +78,26 @@ try {
   await page.waitForTimeout(300)
   await page.screenshot({ path: `${outDir}/05-dark.png` })
 
+  // 進度：捲動後重新載入應回到原處
+  await page.evaluate(() => window.scrollTo(0, 1200))
+  await page.waitForTimeout(1200)
+  const before = await page.evaluate(() => ({
+    y: window.scrollY,
+    title: document.querySelector('.topbar__title')?.textContent,
+  }))
+
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.chapter')
+  await page.waitForTimeout(900)
+  const after = await page.evaluate(() => ({
+    y: window.scrollY,
+    title: document.querySelector('.topbar__title')?.textContent,
+  }))
+
+  if (after.title !== before.title) fail(`重新載入後章節不同：${before.title} → ${after.title}`)
+  if (Math.abs(after.y - before.y) > 80) fail(`重新載入後捲動位置差距過大：${before.y} → ${after.y}`)
+  await page.screenshot({ path: `${outDir}/06-restored.png` })
+
   const errorsToReport = errors.filter((e) => !/favicon|fonts\.g/i.test(e))
   if (errorsToReport.length > 0) fail(`console 錯誤：\n${errorsToReport.join('\n')}`)
 
