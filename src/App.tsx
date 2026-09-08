@@ -1,14 +1,22 @@
-import { useEffect, useState } from 'react'
-import { ChapterView } from './reader/ChapterView'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ChapterView, type TextSelection } from './reader/ChapterView'
+import { SelectionToolbar } from './reader/SelectionToolbar'
 import { useBook } from './reader/useBook'
-import { Toc } from './ui/Toc'
-import { SettingsPanel } from './ui/SettingsPanel'
+import { useAnnotations } from './reader/useAnnotations'
+import { toMarkdown, type Annotation, type Color } from './store/annotations'
 import { useSettings } from './store/useSettings'
-import { ListIcon, TypeIcon } from './ui/icons'
+import { AnnotationsPanel } from './ui/AnnotationsPanel'
+import { NoteDialog } from './ui/NoteDialog'
+import { SettingsPanel } from './ui/SettingsPanel'
+import { Toc } from './ui/Toc'
+import { HighlightIcon, ListIcon, TypeIcon } from './ui/icons'
+
+type Panel = 'toc' | 'settings' | 'annotations' | null
 
 export function App() {
   const {
     book,
+    bookId,
     chapter,
     fragment,
     initialScrollRatio,
@@ -19,10 +27,21 @@ export function App() {
     openBook,
     goToChapter,
   } = useBook()
-  const { settings, update } = useSettings()
-  const [tocOpen, setTocOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const { settings, update: updateSettings } = useSettings()
+  const { annotations, byChapter, add, update, remove } = useAnnotations(bookId)
+
+  const [panel, setPanel] = useState<Panel>(null)
   const [scrolled, setScrolled] = useState(false)
+  const [selection, setSelection] = useState<TextSelection | null>(null)
+  const [active, setActive] = useState<{ id: string; rect: DOMRect } | null>(null)
+  const [editingNote, setEditingNote] = useState<Annotation | null>(null)
+  const [focusAnnotationId, setFocusAnnotationId] = useState<string | undefined>()
+
+  const chapterAnnotations = useMemo(
+    () => (chapter ? (byChapter.get(chapter.index) ?? []) : []),
+    [byChapter, chapter],
+  )
+  const activeAnnotation = annotations.find((item) => item.id === active?.id)
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 4)
@@ -30,35 +49,119 @@ export function App() {
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
+  const navigate = useCallback(
+    (index: number, target?: string) => {
+      setPanel(null)
+      setFocusAnnotationId(undefined)
+      void goToChapter(index, target)
+    },
+    [goToChapter],
+  )
+
   useEffect(() => {
     if (!chapter) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLElement && event.target.isContentEditable) return
-      if (event.key === 'ArrowLeft') void goToChapter(chapter.index - 1)
-      if (event.key === 'ArrowRight') void goToChapter(chapter.index + 1)
+      const target = event.target as HTMLElement | null
+      if (target?.isContentEditable || target?.tagName === 'TEXTAREA') return
+      if (event.key === 'ArrowLeft') navigate(chapter.index - 1)
+      if (event.key === 'ArrowRight') navigate(chapter.index + 1)
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [chapter, goToChapter])
+  }, [chapter, navigate])
+
+  const onSelect = useCallback((next: TextSelection | null) => {
+    setSelection(next)
+    if (next) setActive(null)
+  }, [])
+
+  const onAnnotationClick = useCallback((id: string, rect: DOMRect) => {
+    setSelection(null)
+    setActive({ id, rect })
+  }, [])
+
+  const highlight = (color: Color) => {
+    if (activeAnnotation) {
+      update(activeAnnotation.id, { color })
+      setActive(null)
+      return
+    }
+    if (!selection || !chapter) return
+    add({
+      chapterIndex: chapter.index,
+      chapterTitle: chapter.title,
+      start: selection.start,
+      end: selection.end,
+      text: selection.text,
+      color,
+    })
+    window.getSelection()?.removeAllRanges()
+    setSelection(null)
+  }
+
+  const openNote = () => {
+    if (activeAnnotation) {
+      setEditingNote(activeAnnotation)
+      setActive(null)
+      return
+    }
+    if (!selection || !chapter) return
+    const created = add({
+      chapterIndex: chapter.index,
+      chapterTitle: chapter.title,
+      start: selection.start,
+      end: selection.end,
+      text: selection.text,
+      color: 'yellow',
+    })
+    window.getSelection()?.removeAllRanges()
+    setSelection(null)
+    if (created) setEditingNote(created)
+  }
+
+  const copySelection = () => {
+    const text = activeAnnotation?.text ?? selection?.text
+    if (text) void navigator.clipboard?.writeText(text)
+    setSelection(null)
+    setActive(null)
+  }
+
+  const exportMarkdown = () => {
+    if (!book) return
+    const blob = new Blob([toMarkdown(book.metadata.title, annotations)], {
+      type: 'text/markdown;charset=utf-8',
+    })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${book.metadata.title} - 劃線筆記.md`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const openAnnotation = (annotation: Annotation) => {
+    setPanel(null)
+    setFocusAnnotationId(annotation.id)
+    if (annotation.chapterIndex !== chapter?.index) {
+      void goToChapter(annotation.chapterIndex)
+    }
+  }
 
   const onPickFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) void openBook(() => file.arrayBuffer())
   }
 
-  const navigate = (index: number, target?: string) => {
-    setTocOpen(false)
-    void goToChapter(index, target)
-  }
+  const toolbarRect = active?.rect ?? selection?.rect
 
   return (
     <div className="app">
       <header className="topbar" data-scrolled={scrolled}>
         <button
           className="icon-button"
-          onClick={() => setTocOpen(true)}
+          onClick={() => setPanel('toc')}
           aria-label="開啟目錄"
-          aria-pressed={tocOpen}
+          aria-pressed={panel === 'toc'}
           disabled={!book}
         >
           <ListIcon />
@@ -66,9 +169,18 @@ export function App() {
         <div className="topbar__title">{chapter?.title ?? book?.metadata.title ?? '閱讀器'}</div>
         <button
           className="icon-button"
-          onClick={() => setSettingsOpen(true)}
+          onClick={() => setPanel('annotations')}
+          aria-label="劃線與筆記"
+          aria-pressed={panel === 'annotations'}
+          disabled={!book}
+        >
+          <HighlightIcon />
+        </button>
+        <button
+          className="icon-button"
+          onClick={() => setPanel('settings')}
           aria-label="閱讀設定"
-          aria-pressed={settingsOpen}
+          aria-pressed={panel === 'settings'}
         >
           <TypeIcon />
         </button>
@@ -108,9 +220,13 @@ export function App() {
         <main className="reader">
           <ChapterView
             chapter={chapter}
+            annotations={chapterAnnotations}
             onNavigate={navigate}
+            onSelect={onSelect}
+            onAnnotationClick={onAnnotationClick}
             scrollToFragment={fragment}
             initialScrollRatio={initialScrollRatio}
+            focusAnnotationId={focusAnnotationId}
           />
           <nav className="chapter-nav">
             <button onClick={() => navigate(chapter.index - 1)} disabled={chapter.index === 0}>
@@ -130,20 +246,60 @@ export function App() {
         </main>
       )}
 
-      {settingsOpen && (
-        <SettingsPanel
-          settings={settings}
-          onChange={update}
-          onClose={() => setSettingsOpen(false)}
+      {toolbarRect && (
+        <SelectionToolbar
+          rect={toolbarRect}
+          existing={activeAnnotation}
+          onHighlight={highlight}
+          onNote={openNote}
+          onCopy={copySelection}
+          onRemove={
+            activeAnnotation
+              ? () => {
+                  remove(activeAnnotation.id)
+                  setActive(null)
+                }
+              : undefined
+          }
         />
       )}
 
-      {tocOpen && book && (
+      {editingNote && (
+        <NoteDialog
+          quote={editingNote.text}
+          note={editingNote.note ?? ''}
+          onSave={(note) => {
+            update(editingNote.id, { note })
+            setEditingNote(null)
+          }}
+          onClose={() => setEditingNote(null)}
+        />
+      )}
+
+      {panel === 'settings' && (
+        <SettingsPanel
+          settings={settings}
+          onChange={updateSettings}
+          onClose={() => setPanel(null)}
+        />
+      )}
+
+      {panel === 'annotations' && (
+        <AnnotationsPanel
+          annotations={annotations}
+          onOpen={openAnnotation}
+          onRemove={remove}
+          onExport={exportMarkdown}
+          onClose={() => setPanel(null)}
+        />
+      )}
+
+      {panel === 'toc' && book && (
         <Toc
           nav={book.nav}
           currentChapter={chapter?.index ?? 0}
           onSelect={navigate}
-          onClose={() => setTocOpen(false)}
+          onClose={() => setPanel(null)}
         />
       )}
     </div>
