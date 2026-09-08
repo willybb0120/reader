@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/test-setup.ts","./src/virtual-books.d.ts","./src/epub/fixture.ts","./src/epub/parseEpub.test.ts","./src/epub/parseEpub.ts","./src/epub/realBook.test.ts","./src/epub/sanitize.ts","./src/reader/ChapterView.tsx","./src/ui/Toc.tsx","./src/ui/icons.tsx","./vite.config.ts"],"version":"5.9.3"}
