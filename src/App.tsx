@@ -2,12 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { bundledBooks } from 'virtual:books'
 import { parseEpub, type Book, type Chapter } from './epub/parseEpub'
 import { ChapterView } from './reader/ChapterView'
+import { withTrimmedImages } from './reader/trimImages'
 import { Toc } from './ui/Toc'
 import { SettingsPanel } from './ui/SettingsPanel'
 import { useSettings } from './store/useSettings'
 import { ListIcon, TypeIcon } from './ui/icons'
 
 type Status = 'idle' | 'loading' | 'ready' | 'error'
+
+async function prepare(chapter: Chapter): Promise<Chapter> {
+  return { ...chapter, html: await withTrimmedImages(chapter.html) }
+}
 
 export function App() {
   const [book, setBook] = useState<Book | null>(null)
@@ -29,7 +34,7 @@ export function App() {
       bookRef.current?.dispose()
       bookRef.current = parsed
       setBook(parsed)
-      setChapter(await parsed.getChapter(0))
+      setChapter(await prepare(await parsed.getChapter(0)))
       setFragment(undefined)
       setStatus('ready')
     } catch (cause) {
@@ -59,7 +64,7 @@ export function App() {
     async (index: number, targetFragment?: string) => {
       const current = bookRef.current
       if (!current || index < 0 || index >= current.spine.length) return
-      setChapter(await current.getChapter(index))
+      setChapter(await prepare(await current.getChapter(index)))
       setFragment(targetFragment)
       setTocOpen(false)
     },
