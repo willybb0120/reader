@@ -39,7 +39,7 @@ export interface Book {
   nav: NavItem[]
   coverUrl: string | undefined
   getChapter(index: number): Promise<Chapter>
-  /** 章節純文字，供搜尋與進度估算使用 */
+  /** 章節純文字，位移與渲染後的 HTML 一致，供搜尋與進度估算使用 */
   getChapterText(index: number): Promise<string>
   dispose(): void
 }
@@ -304,21 +304,27 @@ export async function parseEpub(data: Uint8Array | ArrayBuffer): Promise<Book> {
     return { index, title, html }
   }
 
+  function chapterAt(index: number): Chapter {
+    const cached = chapterCache.get(index)
+    if (cached) return cached
+    const chapter = renderChapter(index)
+    chapterCache.set(index, chapter)
+    return chapter
+  }
+
   return {
     metadata,
     spine,
     nav,
     coverUrl,
     async getChapter(index) {
-      const cached = chapterCache.get(index)
-      if (cached) return cached
-      const chapter = renderChapter(index)
-      chapterCache.set(index, chapter)
-      return chapter
+      return chapterAt(index)
     },
     async getChapterText(index) {
-      const doc = parseXml(readText(spine[index]?.href ?? '') ?? '<html><body></body></html>')
-      return (doc.body ?? doc.documentElement).textContent?.replace(/\s+/g, ' ').trim() ?? ''
+      // 直接取渲染後 HTML 的文字，位移才會與畫面上的標註、搜尋結果對得上
+      const container = document.createElement('div')
+      container.innerHTML = chapterAt(index).html
+      return container.textContent ?? ''
     },
     dispose() {
       for (const url of blobUrls.values()) URL.revokeObjectURL(url)

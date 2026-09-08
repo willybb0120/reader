@@ -25,6 +25,8 @@ interface ChapterViewProps {
   initialScrollRatio?: number
   /** 進入章節後要捲到的標註 */
   focusAnnotationId?: string
+  /** 搜尋命中的位置，會標示並捲動過去 */
+  focusRange?: { start: number; end: number }
 }
 
 export function ChapterView({
@@ -36,6 +38,7 @@ export function ChapterView({
   scrollToFragment,
   initialScrollRatio = 0,
   focusAnnotationId,
+  focusRange,
 }: ChapterViewProps) {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -45,9 +48,15 @@ export function ChapterView({
     if (!container) return
     container.innerHTML = chapter.html
     for (const annotation of annotations) {
-      wrapRange(container, annotation.start, annotation.end, annotation.id, annotation.color)
+      wrapRange(container, annotation.start, annotation.end, {
+        annotation: annotation.id,
+        color: annotation.color,
+      })
     }
-  }, [chapter.html, annotations])
+    if (focusRange) {
+      wrapRange(container, focusRange.start, focusRange.end, { searchHit: 'true' })
+    }
+  }, [chapter.html, annotations, focusRange])
 
   useEffect(() => {
     const container = ref.current
@@ -131,6 +140,11 @@ export function ChapterView({
       ?.querySelector(`mark[data-annotation="${focusAnnotationId}"]`)
       ?.scrollIntoView({ block: 'center' })
   }, [focusAnnotationId, chapter.index, annotations])
+
+  useEffect(() => {
+    if (!focusRange) return
+    ref.current?.querySelector('mark[data-search-hit]')?.scrollIntoView({ block: 'center' })
+  }, [focusRange, chapter.index])
 
   return <article className="chapter" ref={ref} lang="zh-TW" />
 }

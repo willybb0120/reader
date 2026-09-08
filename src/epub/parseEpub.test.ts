@@ -86,6 +86,16 @@ describe('parseEpub', () => {
     expect(chapter.html).not.toContain('<svg')
   })
 
+  test('章節純文字與章節 HTML 的文字內容一致', async () => {
+    const book = await parseEpub(makeEpub())
+
+    const chapter = await book.getChapter(0)
+    const container = document.createElement('div')
+    container.innerHTML = chapter.html
+
+    expect(await book.getChapterText(0)).toBe(container.textContent)
+  })
+
   test('封面轉為 blob URL', async () => {
     const book = await parseEpub(makeEpub())
 

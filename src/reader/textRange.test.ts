@@ -55,7 +55,7 @@ describe('wrapRange', () => {
   test('把選取範圍包進 mark 並保留原文字', () => {
     const container = root('<p>0123456789</p>')
 
-    const marks = wrapRange(container, 2, 5, 'note-1')
+    const marks = wrapRange(container, 2, 5, { annotation: 'note-1' })
 
     expect(marks).toHaveLength(1)
     expect(marks[0].textContent).toBe('234')
@@ -66,7 +66,7 @@ describe('wrapRange', () => {
   test('跨元素時每段各包一個 mark', () => {
     const container = root('<p>abc</p><p>def</p>')
 
-    const marks = wrapRange(container, 1, 5, 'note-2')
+    const marks = wrapRange(container, 1, 5, { annotation: 'note-2' })
 
     expect(marks.map((mark) => mark.textContent)).toEqual(['bc', 'de'])
     expect(plainText(container)).toBe('abcdef')
@@ -75,7 +75,7 @@ describe('wrapRange', () => {
   test('包裝後位移仍然可以還原同一段文字', () => {
     const container = root('<p>abcdefghij</p>')
 
-    wrapRange(container, 2, 5, 'note-3')
+    wrapRange(container, 2, 5, { annotation: 'note-3' })
 
     expect(createRange(container, 2, 5)!.toString()).toBe('cde')
   })
