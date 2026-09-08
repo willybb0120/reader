@@ -3,7 +3,9 @@ import { bundledBooks } from 'virtual:books'
 import { parseEpub, type Book, type Chapter } from './epub/parseEpub'
 import { ChapterView } from './reader/ChapterView'
 import { Toc } from './ui/Toc'
-import { ListIcon } from './ui/icons'
+import { SettingsPanel } from './ui/SettingsPanel'
+import { useSettings } from './store/useSettings'
+import { ListIcon, TypeIcon } from './ui/icons'
 
 type Status = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -14,6 +16,8 @@ export function App() {
   const [status, setStatus] = useState<Status>(bundledBooks.length > 0 ? 'loading' : 'idle')
   const [error, setError] = useState('')
   const [tocOpen, setTocOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const { settings, update } = useSettings()
   const [scrolled, setScrolled] = useState(false)
   const bookRef = useRef<Book | null>(null)
 
@@ -91,7 +95,14 @@ export function App() {
           <ListIcon />
         </button>
         <div className="topbar__title">{chapter?.title ?? book?.metadata.title ?? '閱讀器'}</div>
-        <div style={{ width: '2.25rem' }} />
+        <button
+          className="icon-button"
+          onClick={() => setSettingsOpen(true)}
+          aria-label="閱讀設定"
+          aria-pressed={settingsOpen}
+        >
+          <TypeIcon />
+        </button>
       </header>
 
       {status === 'loading' && (
@@ -130,6 +141,14 @@ export function App() {
             </button>
           </nav>
         </main>
+      )}
+
+      {settingsOpen && (
+        <SettingsPanel
+          settings={settings}
+          onChange={update}
+          onClose={() => setSettingsOpen(false)}
+        />
       )}
 
       {tocOpen && book && (

@@ -64,6 +64,20 @@ try {
   if (!text || text.trim().length < 100) fail(`章節內容過短：${text?.length ?? 0} 字`)
   await page.screenshot({ path: `${outDir}/03-chapter.png` })
 
+  // 閱讀設定：切到夜間主題與較大字級
+  await page.click('[aria-label="閱讀設定"]')
+  await page.waitForSelector('.drawer--right')
+  await page.waitForTimeout(400)
+  await page.screenshot({ path: `${outDir}/04-settings.png` })
+
+  await page.click('[data-theme-swatch="dark"]')
+  await page.waitForTimeout(200)
+  const theme = await page.getAttribute('html', 'data-theme')
+  if (theme !== 'dark') fail(`主題未切換：${theme}`)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: `${outDir}/05-dark.png` })
+
   const errorsToReport = errors.filter((e) => !/favicon|fonts\.g/i.test(e))
   if (errorsToReport.length > 0) fail(`console 錯誤：\n${errorsToReport.join('\n')}`)
 

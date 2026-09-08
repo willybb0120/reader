@@ -29,3 +29,12 @@ export function CloseIcon({ size = 20 }: IconProps) {
     </svg>
   )
 }
+
+export function TypeIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M4 7V5h11v2M9.5 5v14M7 19h5" />
+      <path d="M14.5 12v-1H21v1M17.5 11v8M16 19h3" />
+    </svg>
+  )
+}
