@@ -359,6 +359,17 @@ button {
   filter: brightness(0.85) contrast(0.95);
 }
 
+/* 白底線稿：亮色主題讓白底融入紙色，暗色主題反相成淺色線條 */
+.chapter img[data-line-art] {
+  mix-blend-mode: multiply;
+}
+
+:root[data-theme='dark'] .chapter img[data-line-art] {
+  /* 反相後底色成為純黑，lighten 讓它讓位給頁面底色 */
+  mix-blend-mode: lighten;
+  filter: invert(1) brightness(0.88);
+}
+
 .chapter img {
   display: block;
   max-width: 100%;
