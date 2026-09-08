@@ -102,6 +102,13 @@ describe('parseEpub', () => {
     expect(book.coverUrl).toMatch(/^blob:/)
   })
 
+  test('封面同時提供原始位元組與 MIME 類型', async () => {
+    const book = await parseEpub(makeEpub())
+
+    expect(book.coverImage?.type).toBe('image/png')
+    expect(book.coverImage!.data.byteLength).toBeGreaterThan(0)
+  })
+
   test('缺少 container.xml 時丟出可辨識的錯誤', async () => {
     await expect(parseEpub(makeEpub({ omitContainer: true }))).rejects.toThrow(EpubError)
     await expect(parseEpub(makeEpub({ omitContainer: true }))).rejects.toThrow(/container\.xml/)

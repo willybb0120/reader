@@ -46,14 +46,21 @@ try {
   page.on('pageerror', (err) => errors.push(err.message))
 
   await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' })
-  await page.waitForSelector('.chapter', { timeout: 15000 })
 
-  await page.screenshot({ path: `${outDir}/01-open.png` })
+  // 書櫃：內建書應自動匯入
+  await page.waitForSelector('.book-card', { timeout: 20000 })
+  await page.screenshot({ path: `${outDir}/01-library.png` })
+  const cards = await page.$$('.book-card')
+  if (cards.length !== 1) fail(`書櫃書本數量錯誤：${cards.length}`)
+
+  await page.click('.book-card__open')
+  await page.waitForSelector('.chapter', { timeout: 15000 })
+  await page.screenshot({ path: `${outDir}/02-open.png` })
 
   await page.click('[aria-label="開啟目錄"]')
   await page.waitForSelector('.drawer')
   await page.waitForTimeout(400)
-  await page.screenshot({ path: `${outDir}/02-toc.png` })
+  await page.screenshot({ path: `${outDir}/03-toc.png` })
 
   const items = await page.$$('.toc__item')
   if (items.length < 2) fail(`目錄項目過少：${items.length}`)
@@ -62,13 +69,13 @@ try {
 
   const text = await page.textContent('.chapter')
   if (!text || text.trim().length < 100) fail(`章節內容過短：${text?.length ?? 0} 字`)
-  await page.screenshot({ path: `${outDir}/03-chapter.png` })
+  await page.screenshot({ path: `${outDir}/04-chapter.png` })
 
   // 閱讀設定：切到夜間主題與較大字級
   await page.click('[aria-label="閱讀設定"]')
   await page.waitForSelector('.drawer--right')
   await page.waitForTimeout(400)
-  await page.screenshot({ path: `${outDir}/04-settings.png` })
+  await page.screenshot({ path: `${outDir}/05-settings.png` })
 
   await page.click('[data-theme-swatch="dark"]')
   await page.waitForTimeout(200)
@@ -76,7 +83,7 @@ try {
   if (theme !== 'dark') fail(`主題未切換：${theme}`)
   await page.keyboard.press('Escape')
   await page.waitForTimeout(300)
-  await page.screenshot({ path: `${outDir}/05-dark.png` })
+  await page.screenshot({ path: `${outDir}/06-dark.png` })
 
   // 進度：捲動後重新載入應回到原處
   await page.evaluate(() => window.scrollTo(0, 1200))
@@ -96,7 +103,7 @@ try {
 
   if (after.title !== before.title) fail(`重新載入後章節不同：${before.title} → ${after.title}`)
   if (Math.abs(after.y - before.y) > 80) fail(`重新載入後捲動位置差距過大：${before.y} → ${after.y}`)
-  await page.screenshot({ path: `${outDir}/06-restored.png` })
+  await page.screenshot({ path: `${outDir}/07-restored.png` })
 
   // 劃線：選一段文字 → 工具列 → 黃色劃線 → 出現在側欄
   await page.evaluate(() => {
@@ -109,7 +116,7 @@ try {
     document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
   })
   await page.waitForSelector('.selection-toolbar')
-  await page.screenshot({ path: `${outDir}/07-selection.png` })
+  await page.screenshot({ path: `${outDir}/08-selection.png` })
   await page.click('[aria-label="黃色劃線"]')
   await page.waitForSelector('.chapter mark')
 
@@ -118,7 +125,7 @@ try {
   await page.waitForTimeout(400)
   const marks = await page.$$('.annotation')
   if (marks.length !== 1) fail(`側欄標註數量錯誤：${marks.length}`)
-  await page.screenshot({ path: `${outDir}/08-annotations.png` })
+  await page.screenshot({ path: `${outDir}/09-annotations.png` })
   await page.keyboard.press('Escape')
   await page.waitForTimeout(300)
 
@@ -132,7 +139,7 @@ try {
     document.querySelector('.chapter mark')?.scrollIntoView({ block: 'center' }),
   )
   await page.waitForTimeout(300)
-  await page.screenshot({ path: `${outDir}/09-highlight-persisted.png` })
+  await page.screenshot({ path: `${outDir}/10-highlight-persisted.png` })
 
   // 搜尋：輸入關鍵字並跳到結果
   await page.click('[aria-label="搜尋全書"]')
@@ -142,12 +149,20 @@ try {
   await page.waitForTimeout(400)
   const hits = await page.$$('.search__hit')
   if (hits.length < 5) fail(`搜尋結果過少：${hits.length}`)
-  await page.screenshot({ path: `${outDir}/10-search.png` })
+  await page.screenshot({ path: `${outDir}/11-search.png` })
 
   await hits[2].click()
   await page.waitForSelector('.chapter mark[data-search-hit]')
   await page.waitForTimeout(400)
-  await page.screenshot({ path: `${outDir}/11-search-hit.png` })
+  await page.screenshot({ path: `${outDir}/12-search-hit.png` })
+
+  // 回到書櫃並確認進度顯示
+  await page.click('[aria-label="回到書櫃"]')
+  await page.waitForSelector('.library__grid')
+  await page.waitForTimeout(300)
+  const percent = await page.textContent('.book-card__progress')
+  if (!percent) fail('書櫃沒有顯示閱讀進度')
+  await page.screenshot({ path: `${outDir}/13-library-progress.png` })
 
   const errorsToReport = errors.filter((e) => !/favicon|fonts\.g/i.test(e))
   if (errorsToReport.length > 0) fail(`console 錯誤：\n${errorsToReport.join('\n')}`)
