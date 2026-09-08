@@ -37,6 +37,8 @@ export function useBook(id: string | null) {
 
   useEffect(() => {
     if (!id) {
+      bookRef.current?.dispose()
+      bookRef.current = null
       setBook(null)
       setChapter(null)
       setStatus('idle')
