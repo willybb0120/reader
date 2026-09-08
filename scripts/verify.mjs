@@ -156,13 +156,30 @@ try {
   await page.waitForTimeout(400)
   await page.screenshot({ path: `${outDir}/12-search-hit.png` })
 
+  // 快捷鍵：? 開說明、T 開目錄、D 換主題
+  await page.keyboard.press('?')
+  await page.waitForSelector('.help')
+  await page.waitForTimeout(250)
+  await page.screenshot({ path: `${outDir}/13-shortcuts.png` })
+  await page.keyboard.press('Escape')
+
+  await page.keyboard.press('t')
+  await page.waitForSelector('.toc')
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(250)
+
+  const themeBefore = await page.getAttribute('html', 'data-theme')
+  await page.keyboard.press('d')
+  await page.waitForTimeout(150)
+  if ((await page.getAttribute('html', 'data-theme')) === themeBefore) fail('D 未切換主題')
+
   // 回到書櫃並確認進度顯示
   await page.click('[aria-label="回到書櫃"]')
   await page.waitForSelector('.library__grid')
   await page.waitForTimeout(300)
   const percent = await page.textContent('.book-card__progress')
   if (!percent) fail('書櫃沒有顯示閱讀進度')
-  await page.screenshot({ path: `${outDir}/13-library-progress.png` })
+  await page.screenshot({ path: `${outDir}/14-library-progress.png` })
 
   const errorsToReport = errors.filter((e) => !/favicon|fonts\.g/i.test(e))
   if (errorsToReport.length > 0) fail(`console 錯誤：\n${errorsToReport.join('\n')}`)

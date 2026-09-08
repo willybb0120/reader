@@ -5,6 +5,7 @@ import { CloseIcon } from './icons'
 interface SettingsPanelProps {
   settings: Settings
   onChange: (patch: Partial<Settings>) => void
+  onShowShortcuts: () => void
   onClose: () => void
 }
 
@@ -47,7 +48,12 @@ function Slider({ label, value, range, step, format, onChange }: SliderProps) {
   )
 }
 
-export function SettingsPanel({ settings, onChange, onClose }: SettingsPanelProps) {
+export function SettingsPanel({
+  settings,
+  onChange,
+  onShowShortcuts,
+  onClose,
+}: SettingsPanelProps) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose()
@@ -141,6 +147,10 @@ export function SettingsPanel({ settings, onChange, onClose }: SettingsPanelProp
               onChange={(event) => onChange({ justify: event.target.checked })}
             />
           </label>
+
+          <button className="settings__link" onClick={onShowShortcuts}>
+            鍵盤快捷鍵…
+          </button>
         </div>
       </div>
     </>

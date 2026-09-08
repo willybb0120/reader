@@ -12,6 +12,9 @@ import { NoteDialog } from './ui/NoteDialog'
 import { SettingsPanel } from './ui/SettingsPanel'
 import { SearchPanel } from './ui/SearchPanel'
 import { Toc } from './ui/Toc'
+import { HelpDialog } from './ui/HelpDialog'
+import { matchShortcut } from './reader/shortcuts'
+import { LIMITS, type Theme } from './store/settings'
 import { HighlightIcon, LibraryIcon, ListIcon, SearchIcon, TypeIcon } from './ui/icons'
 import type { SearchHit } from './reader/search'
 
@@ -47,6 +50,7 @@ export function App() {
   const [editingNote, setEditingNote] = useState<Annotation | null>(null)
   const [focusAnnotationId, setFocusAnnotationId] = useState<string | undefined>()
   const [focusRange, setFocusRange] = useState<{ start: number; end: number } | undefined>()
+  const [helpOpen, setHelpOpen] = useState(false)
 
   const chapterAnnotations = useMemo(
     () => (chapter ? (byChapter.get(chapter.index) ?? []) : []),
@@ -70,17 +74,51 @@ export function App() {
     [goToChapter],
   )
 
+  // 沒有相依陣列：快捷鍵要讀到最新的章節與設定，每次渲染重新掛載最單純
   useEffect(() => {
-    if (!chapter) return
     const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null
-      if (target?.isContentEditable || target?.tagName === 'TEXTAREA') return
-      if (event.key === 'ArrowLeft') navigate(chapter.index - 1)
-      if (event.key === 'ArrowRight') navigate(chapter.index + 1)
+      const action = matchShortcut(event)
+      if (!action) return
+
+      switch (action) {
+        case 'close':
+          setPanel(null)
+          setHelpOpen(false)
+          return
+        case 'help':
+          setHelpOpen(true)
+          break
+        case 'settings':
+          setPanel((current) => (current === 'settings' ? null : 'settings'))
+          break
+        case 'fontUp':
+        case 'fontDown': {
+          const [min, max] = LIMITS.fontSize
+          const next = settings.fontSize + (action === 'fontUp' ? 1 : -1)
+          updateSettings({ fontSize: Math.min(max, Math.max(min, next)) })
+          break
+        }
+        case 'cycleTheme': {
+          const order: Theme[] = ['light', 'sepia', 'dark']
+          const next = order[(order.indexOf(settings.theme) + 1) % order.length]
+          updateSettings({ theme: next })
+          break
+        }
+        default:
+          if (!chapter) return
+          if (action === 'prevChapter') navigate(chapter.index - 1)
+          else if (action === 'nextChapter') navigate(chapter.index + 1)
+          else if (action === 'library') closeBook()
+          else if (action === 'toc') setPanel((c) => (c === 'toc' ? null : 'toc'))
+          else if (action === 'search') setPanel((c) => (c === 'search' ? null : 'search'))
+          else if (action === 'annotations')
+            setPanel((c) => (c === 'annotations' ? null : 'annotations'))
+      }
+      event.preventDefault()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [chapter, navigate])
+  })
 
   const onSelect = useCallback((next: TextSelection | null) => {
     setSelection(next)
@@ -320,10 +358,16 @@ export function App() {
         />
       )}
 
+      {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
+
       {panel === 'settings' && (
         <SettingsPanel
           settings={settings}
           onChange={updateSettings}
+          onShowShortcuts={() => {
+            setPanel(null)
+            setHelpOpen(true)
+          }}
           onClose={() => setPanel(null)}
         />
       )}
