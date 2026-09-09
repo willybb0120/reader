@@ -37,7 +37,7 @@ export function makeEpub(options: FixtureOptions = {}): Uint8Array {
 
   const spine = options.emptySpine
     ? ''
-    : `<itemref idref="c1"/><itemref idref="c2"/><itemref idref="c3"/><itemref idref="c4"/>`
+    : `<itemref idref="c1"/><itemref idref="c2"/><itemref idref="c3"/><itemref idref="c4"/><itemref idref="c5"/>`
 
   files['OEBPS/content.opf'] = strToU8(
     `<?xml version="1.0" encoding="utf-8"?>
@@ -56,6 +56,7 @@ export function makeEpub(options: FixtureOptions = {}): Uint8Array {
     <item id="c2" href="text/c2.xhtml" media-type="application/xhtml+xml"/>
     <item id="c3" href="c3.xhtml" media-type="application/xhtml+xml"/>
     <item id="c4" href="c4.xhtml" media-type="application/xhtml+xml"/>
+    <item id="c5" href="c5.xhtml" media-type="application/xhtml+xml"/>
   </manifest>
   <spine>${spine}</spine>
 </package>`,
@@ -105,6 +106,18 @@ export function makeEpub(options: FixtureOptions = {}): Uint8Array {
 <body><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
   width="100%" height="100%" viewBox="0 0 100 200"><image width="100" height="200" xlink:href="cover.png"/></svg>
 </body></html>`,
+  )
+
+  // 印刷版遺留的空行：全形空白、半形空白、&nbsp; 與完全空的段落
+  files['OEBPS/c5.xhtml'] = strToU8(
+    `<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>空行</title></head>
+<body><h1>空行</h1>
+<p data-blank="1">　　</p>
+<p data-blank="2"> </p>
+<p data-blank="3"></p>
+<p data-blank="4">&#160;</p>
+<p>有字的段落</p></body></html>`,
   )
 
   files['OEBPS/style.css'] = strToU8('p { color: rebeccapurple }')

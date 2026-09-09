@@ -24,6 +24,18 @@ const BLOCKED_TAGS = new Set([
 
 const SAFE_URI = /^(?:blob:|data:image\/|https?:|mailto:|#)/i
 
+/** 只有空白（含全形空白與 &nbsp;）的段落，是印刷版面遺留的空行 */
+const BLANK_TEXT = /^[\s\u3000\u00a0]*$/
+const COLLAPSIBLE = new Set(['p', 'div'])
+
+function isBlankParagraph(el: Element): boolean {
+  return (
+    COLLAPSIBLE.has(el.tagName.toLowerCase()) &&
+    el.children.length === 0 &&
+    BLANK_TEXT.test(el.textContent ?? '')
+  )
+}
+
 function cleanElement(el: Element): void {
   for (const attr of [...el.attributes]) {
     const name = attr.name.toLowerCase()
@@ -36,7 +48,7 @@ function cleanElement(el: Element): void {
     }
   }
   for (const child of [...el.children]) {
-    if (BLOCKED_TAGS.has(child.tagName.toLowerCase())) child.remove()
+    if (BLOCKED_TAGS.has(child.tagName.toLowerCase()) || isBlankParagraph(child)) child.remove()
     else cleanElement(child)
   }
 }

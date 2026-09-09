@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'vitest'
-import { loadProgress, saveProgress, overallProgress, remainingMinutes } from './progress'
+import { loadProgress, saveProgress, overallProgress } from './progress'
 
 describe('閱讀進度儲存', () => {
   beforeEach(() => localStorage.clear())
@@ -9,15 +9,15 @@ describe('閱讀進度儲存', () => {
   })
 
   test('依書籍識別碼分別保存', () => {
-    saveProgress('book-1', { chapterIndex: 3, scrollRatio: 0.5 })
-    saveProgress('book-2', { chapterIndex: 8, scrollRatio: 0.1 })
+    saveProgress('book-1', { chapterIndex: 3, ratio: 0.5 })
+    saveProgress('book-2', { chapterIndex: 8, ratio: 0.1 })
 
     expect(loadProgress('book-1')?.chapterIndex).toBe(3)
     expect(loadProgress('book-2')?.chapterIndex).toBe(8)
   })
 
   test('保存時記錄更新時間', () => {
-    saveProgress('book-1', { chapterIndex: 1, scrollRatio: 0 })
+    saveProgress('book-1', { chapterIndex: 1, ratio: 0 })
 
     expect(loadProgress('book-1')!.updatedAt).toBeGreaterThan(0)
   })
@@ -29,7 +29,7 @@ describe('閱讀進度儲存', () => {
   })
 
   test('保存全書進度百分比，供書櫃顯示', () => {
-    saveProgress('book-1', { chapterIndex: 2, scrollRatio: 0.5, overall: 0.42 })
+    saveProgress('book-1', { chapterIndex: 2, ratio: 0.5, overall: 0.42 })
 
     expect(loadProgress('book-1')!.overall).toBeCloseTo(0.42)
   })
@@ -40,10 +40,31 @@ describe('閱讀進度儲存', () => {
     expect(loadProgress('book-1')!.overall).toBe(0)
   })
 
-  test('捲動比例夾在 0 到 1 之間', () => {
-    saveProgress('book-1', { chapterIndex: 0, scrollRatio: 4.2 })
+  test('保存章內的起始字元位移，供分頁還原位置', () => {
+    saveProgress('book-1', { chapterIndex: 2, ratio: 0.5, startOffset: 1840 })
 
-    expect(loadProgress('book-1')!.scrollRatio).toBe(1)
+    expect(loadProgress('book-1')!.startOffset).toBe(1840)
+  })
+
+  test('沒有起始位移的舊資料視為 0', () => {
+    localStorage.setItem('reader:progress:book-1', JSON.stringify({ chapterIndex: 1 }))
+
+    expect(loadProgress('book-1')!.startOffset).toBe(0)
+  })
+
+  test('舊版的 scrollRatio 欄位仍讀得到', () => {
+    localStorage.setItem(
+      'reader:progress:book-1',
+      JSON.stringify({ chapterIndex: 1, scrollRatio: 0.75 }),
+    )
+
+    expect(loadProgress('book-1')!.ratio).toBe(0.75)
+  })
+
+  test('章內位置比例夾在 0 到 1 之間', () => {
+    saveProgress('book-1', { chapterIndex: 0, ratio: 4.2 })
+
+    expect(loadProgress('book-1')!.ratio).toBe(1)
   })
 })
 
@@ -64,29 +85,5 @@ describe('overallProgress', () => {
 
   test('沒有字數資料時退回以章節數估算', () => {
     expect(overallProgress([], 1, 0)).toBe(0)
-  })
-})
-
-describe('remainingMinutes', () => {
-  const lengths = [3500, 3500] // 共 7000 字，350 字/分鐘 → 20 分鐘
-
-  test('全書未讀時是總時長', () => {
-    expect(remainingMinutes(lengths, 0, 0)).toBe(20)
-  })
-
-  test('讀到一半剩下一半', () => {
-    expect(remainingMinutes(lengths, 1, 0)).toBe(10)
-  })
-
-  test('讀完是 0', () => {
-    expect(remainingMinutes(lengths, 1, 1)).toBe(0)
-  })
-
-  test('不到一分鐘進位為 1 分鐘', () => {
-    expect(remainingMinutes([100], 0, 0)).toBe(1)
-  })
-
-  test('沒有字數資料時回傳 null', () => {
-    expect(remainingMinutes([], 0, 0)).toBeNull()
   })
 })

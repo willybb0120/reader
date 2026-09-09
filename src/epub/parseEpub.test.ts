@@ -20,6 +20,7 @@ describe('parseEpub', () => {
       'OEBPS/text/c2.xhtml',
       'OEBPS/c3.xhtml',
       'OEBPS/c4.xhtml',
+      'OEBPS/c5.xhtml',
     ])
   })
 
@@ -100,6 +101,15 @@ describe('parseEpub', () => {
     const book = await parseEpub(makeEpub())
 
     expect(book.coverUrl).toMatch(/^blob:/)
+  })
+
+  test('純空白段落被移除，有內容的段落保留', async () => {
+    const book = await parseEpub(makeEpub())
+
+    const chapter = await book.getChapter(4)
+
+    expect(chapter.html).not.toContain('data-blank')
+    expect(chapter.html).toContain('有字的段落')
   })
 
   test('封面同時提供原始位元組與 MIME 類型', async () => {

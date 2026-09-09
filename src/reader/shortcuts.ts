@@ -1,6 +1,6 @@
 export type ShortcutAction =
-  | 'prevChapter'
-  | 'nextChapter'
+  | 'prevPage'
+  | 'nextPage'
   | 'toc'
   | 'search'
   | 'annotations'
@@ -13,8 +13,9 @@ export type ShortcutAction =
   | 'close'
 
 const BY_KEY: Record<string, ShortcutAction> = {
-  arrowleft: 'prevChapter',
-  arrowright: 'nextChapter',
+  arrowleft: 'prevPage',
+  arrowright: 'nextPage',
+  ' ': 'nextPage',
   t: 'toc',
   f: 'search',
   '/': 'search',
@@ -31,7 +32,8 @@ const BY_KEY: Record<string, ShortcutAction> = {
 
 /** 供說明面板顯示的快捷鍵一覽。 */
 export const SHORTCUT_HELP: ReadonlyArray<{ keys: string; description: string }> = [
-  { keys: '← / →', description: '上一節 / 下一節' },
+  { keys: '← / →', description: '上一頁 / 下一頁' },
+  { keys: 'Space', description: '下一頁' },
   { keys: 'T', description: '目錄' },
   { keys: 'F 或 /', description: '搜尋全書' },
   { keys: 'H', description: '劃線與筆記' },

@@ -1,22 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Library } from './ui/Library'
-import { useLibrary } from './reader/useLibrary'
-import { ChapterView, type TextSelection } from './reader/ChapterView'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChapterView, type Entry, type PagerApi, type TextSelection } from './reader/ChapterView'
 import { SelectionToolbar } from './reader/SelectionToolbar'
-import { useBook } from './reader/useBook'
+import { matchShortcut } from './reader/shortcuts'
 import { useAnnotations } from './reader/useAnnotations'
+import { useBook } from './reader/useBook'
+import { useLibrary } from './reader/useLibrary'
+import type { SearchHit } from './reader/search'
 import { toMarkdown, type Annotation, type Color } from './store/annotations'
+import { LIMITS, type Theme } from './store/settings'
 import { useSettings } from './store/useSettings'
 import { AnnotationsPanel } from './ui/AnnotationsPanel'
-import { NoteDialog } from './ui/NoteDialog'
-import { SettingsPanel } from './ui/SettingsPanel'
-import { SearchPanel } from './ui/SearchPanel'
-import { Toc } from './ui/Toc'
 import { HelpDialog } from './ui/HelpDialog'
-import { matchShortcut } from './reader/shortcuts'
-import { LIMITS, type Theme } from './store/settings'
+import { Library } from './ui/Library'
+import { NoteDialog } from './ui/NoteDialog'
+import { SearchPanel } from './ui/SearchPanel'
+import { SettingsPanel } from './ui/SettingsPanel'
+import { Toc } from './ui/Toc'
 import { HighlightIcon, LibraryIcon, ListIcon, SearchIcon, TypeIcon } from './ui/icons'
-import type { SearchHit } from './reader/search'
 
 type Panel = 'toc' | 'search' | 'settings' | 'annotations' | null
 
@@ -30,27 +30,25 @@ export function App() {
   const {
     book,
     chapter,
-    fragment,
-    initialScrollRatio,
+    entry,
     status,
     error,
     chapterTexts,
     chapterTitles,
     progress,
-    minutesLeft,
+    reportPosition,
     goToChapter,
   } = useBook(bookId)
   const { settings, update: updateSettings } = useSettings()
   const { annotations, byChapter, add, update, remove } = useAnnotations(bookId ?? '')
 
   const [panel, setPanel] = useState<Panel>(null)
-  const [scrolled, setScrolled] = useState(false)
   const [selection, setSelection] = useState<TextSelection | null>(null)
   const [active, setActive] = useState<{ id: string; rect: DOMRect } | null>(null)
   const [editingNote, setEditingNote] = useState<Annotation | null>(null)
-  const [focusAnnotationId, setFocusAnnotationId] = useState<string | undefined>()
-  const [focusRange, setFocusRange] = useState<{ start: number; end: number } | undefined>()
+  const [highlightRange, setHighlightRange] = useState<{ start: number; end: number } | undefined>()
   const [helpOpen, setHelpOpen] = useState(false)
+  const pagerRef = useRef<PagerApi | null>(null)
 
   const chapterAnnotations = useMemo(
     () => (chapter ? (byChapter.get(chapter.index) ?? []) : []),
@@ -58,21 +56,46 @@ export function App() {
   )
   const activeAnnotation = annotations.find((item) => item.id === active?.id)
 
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 4)
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
-  }, [])
+  const layoutKey = [
+    settings.font,
+    settings.fontSize,
+    settings.lineHeight,
+    settings.letterSpacing,
+    settings.readingWidth,
+    settings.justify,
+  ].join('|')
 
-  const navigate = useCallback(
-    (index: number, target?: string) => {
+  const jump = useCallback(
+    (index: number, target: Entry = { kind: 'first' }) => {
       setPanel(null)
-      setFocusAnnotationId(undefined)
-      setFocusRange(undefined)
+      setHighlightRange(undefined)
       void goToChapter(index, target)
     },
     [goToChapter],
   )
+
+  const navigate = useCallback(
+    (index: number, fragment?: string) =>
+      jump(index, fragment ? { kind: 'fragment', id: fragment } : { kind: 'first' }),
+    [jump],
+  )
+
+  const openFromLibrary = (id: string) => {
+    localStorage.setItem(LAST_BOOK_KEY, id)
+    setBookId(id)
+  }
+
+  const closeBook = useCallback(() => {
+    localStorage.removeItem(LAST_BOOK_KEY)
+    setBookId(null)
+    void library.refresh()
+  }, [library])
+
+  const importFiles = (files: readonly File[]) => {
+    void library.importFiles(files).then((id) => {
+      if (id) openFromLibrary(id)
+    })
+  }
 
   // 沒有相依陣列：快捷鍵要讀到最新的章節與設定，每次渲染重新掛載最單純
   useEffect(() => {
@@ -100,14 +123,13 @@ export function App() {
         }
         case 'cycleTheme': {
           const order: Theme[] = ['light', 'sepia', 'dark']
-          const next = order[(order.indexOf(settings.theme) + 1) % order.length]
-          updateSettings({ theme: next })
+          updateSettings({ theme: order[(order.indexOf(settings.theme) + 1) % order.length] })
           break
         }
         default:
           if (!chapter) return
-          if (action === 'prevChapter') navigate(chapter.index - 1)
-          else if (action === 'nextChapter') navigate(chapter.index + 1)
+          if (action === 'prevPage') pagerRef.current?.turn(-1)
+          else if (action === 'nextPage') pagerRef.current?.turn(1)
           else if (action === 'library') closeBook()
           else if (action === 'toc') setPanel((c) => (c === 'toc' ? null : 'toc'))
           else if (action === 'search') setPanel((c) => (c === 'search' ? null : 'search'))
@@ -130,6 +152,23 @@ export function App() {
     setActive({ id, rect })
   }, [])
 
+  const onPastEnd = useCallback(() => {
+    if (chapter) jump(chapter.index + 1, { kind: 'first' })
+  }, [chapter, jump])
+
+  const onPastStart = useCallback(() => {
+    if (chapter) jump(chapter.index - 1, { kind: 'last' })
+  }, [chapter, jump])
+
+  const draftFrom = (sel: TextSelection, color: Color) => ({
+    chapterIndex: chapter!.index,
+    chapterTitle: chapter!.title,
+    start: sel.start,
+    end: sel.end,
+    text: sel.text,
+    color,
+  })
+
   const highlight = (color: Color) => {
     if (activeAnnotation) {
       update(activeAnnotation.id, { color })
@@ -137,14 +176,7 @@ export function App() {
       return
     }
     if (!selection || !chapter) return
-    add({
-      chapterIndex: chapter.index,
-      chapterTitle: chapter.title,
-      start: selection.start,
-      end: selection.end,
-      text: selection.text,
-      color,
-    })
+    add(draftFrom(selection, color))
     window.getSelection()?.removeAllRanges()
     setSelection(null)
   }
@@ -156,14 +188,7 @@ export function App() {
       return
     }
     if (!selection || !chapter) return
-    const created = add({
-      chapterIndex: chapter.index,
-      chapterTitle: chapter.title,
-      start: selection.start,
-      end: selection.end,
-      text: selection.text,
-      color: 'yellow',
-    })
+    const created = add(draftFrom(selection, 'yellow'))
     window.getSelection()?.removeAllRanges()
     setSelection(null)
     if (created) setEditingNote(created)
@@ -191,42 +216,19 @@ export function App() {
 
   const openHit = (hit: SearchHit) => {
     setPanel(null)
-    setFocusAnnotationId(undefined)
-    setFocusRange({ start: hit.start, end: hit.end })
-    if (hit.chapterIndex !== chapter?.index) void goToChapter(hit.chapterIndex)
+    setHighlightRange({ start: hit.start, end: hit.end })
+    void goToChapter(hit.chapterIndex, { kind: 'offset', offset: hit.start })
   }
 
-  const openAnnotation = (annotation: Annotation) => {
-    setPanel(null)
-    setFocusRange(undefined)
-    setFocusAnnotationId(annotation.id)
-    if (annotation.chapterIndex !== chapter?.index) {
-      void goToChapter(annotation.chapterIndex)
-    }
-  }
+  const openAnnotation = (annotation: Annotation) =>
+    jump(annotation.chapterIndex, { kind: 'annotation', id: annotation.id })
 
-  const openFromLibrary = (id: string) => {
-    localStorage.setItem(LAST_BOOK_KEY, id)
-    setBookId(id)
-  }
-
-  const closeBook = () => {
-    localStorage.removeItem(LAST_BOOK_KEY)
-    setBookId(null)
-    void library.refresh()
-  }
-
-  const importFiles = (files: readonly File[]) => {
-    void library.importFiles(files).then((id) => {
-      if (id) openFromLibrary(id)
-    })
-  }
-
+  const reading = status === 'ready' && book && chapter
   const toolbarRect = active?.rect ?? selection?.rect
 
   return (
-    <div className="app">
-      <header className="topbar" data-scrolled={scrolled}>
+    <div className="app" data-reading={Boolean(reading)}>
+      <header className="topbar">
         {book && (
           <>
             <button className="icon-button" onClick={closeBook} aria-label="回到書櫃">
@@ -269,7 +271,7 @@ export function App() {
         >
           <TypeIcon />
         </button>
-        {status === 'ready' && (
+        {reading && (
           <div
             className="topbar__progress"
             style={{ transform: `scaleX(${progress})` }}
@@ -297,34 +299,23 @@ export function App() {
         />
       )}
 
-      {status === 'ready' && book && chapter && (
+      {reading && (
         <main className="reader">
           <ChapterView
             chapter={chapter}
             annotations={chapterAnnotations}
+            entry={entry}
+            layoutKey={layoutKey}
+            highlightRange={highlightRange}
+            pagerRef={pagerRef}
             onNavigate={navigate}
             onSelect={onSelect}
             onAnnotationClick={onAnnotationClick}
-            scrollToFragment={fragment}
-            initialScrollRatio={initialScrollRatio}
-            focusAnnotationId={focusAnnotationId}
-            focusRange={focusRange}
+            onPastEnd={onPastEnd}
+            onPastStart={onPastStart}
+            onPositionChange={reportPosition}
           />
-          <nav className="chapter-nav">
-            <button onClick={() => navigate(chapter.index - 1)} disabled={chapter.index === 0}>
-              ← 上一節
-            </button>
-            <span className="chapter-nav__position">
-              {Math.round(progress * 100)}%
-              {minutesLeft !== null && ` · 剩餘約 ${minutesLeft} 分鐘`}
-            </span>
-            <button
-              onClick={() => navigate(chapter.index + 1)}
-              disabled={chapter.index >= book.spine.length - 1}
-            >
-              下一節 →
-            </button>
-          </nav>
+          <div className="pagebar">{Math.round(progress * 100)}%</div>
         </main>
       )}
 
