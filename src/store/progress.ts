@@ -1,7 +1,9 @@
 export interface Progress {
   chapterIndex: number
-  /** 章節內的捲動位置，0 至 1 */
-  scrollRatio: number
+  /** 章節內的位置比例，0 至 1 */
+  ratio: number
+  /** 章節內的起始字元位移。改字級後仍能回到同一句話 */
+  startOffset: number
   /** 全書進度，0 至 1。存起來讓書櫃不必重新解析整本書 */
   overall: number
   updatedAt: number
@@ -19,11 +21,15 @@ export function loadProgress(bookId: string): Progress | null {
   try {
     const raw = localStorage.getItem(KEY_PREFIX + bookId)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<Progress>
+    const parsed = JSON.parse(raw) as Partial<Progress> & { scrollRatio?: number }
     if (typeof parsed.chapterIndex !== 'number') return null
     return {
       chapterIndex: Math.max(0, Math.trunc(parsed.chapterIndex)),
-      scrollRatio: clamp01(parsed.scrollRatio),
+      ratio: clamp01(parsed.ratio ?? parsed.scrollRatio),
+      startOffset:
+        typeof parsed.startOffset === 'number' && Number.isFinite(parsed.startOffset)
+          ? Math.max(0, Math.trunc(parsed.startOffset))
+          : 0,
       overall: clamp01(parsed.overall),
       updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
     }
@@ -34,12 +40,16 @@ export function loadProgress(bookId: string): Progress | null {
 
 export function saveProgress(
   bookId: string,
-  progress: Omit<Progress, 'updatedAt' | 'overall'> & { overall?: number },
+  progress: Omit<Progress, 'updatedAt' | 'overall' | 'startOffset'> & {
+    overall?: number
+    startOffset?: number
+  },
 ): void {
   try {
     const record: Progress = {
       chapterIndex: Math.max(0, Math.trunc(progress.chapterIndex)),
-      scrollRatio: clamp01(progress.scrollRatio),
+      ratio: clamp01(progress.ratio),
+      startOffset: Math.max(0, Math.trunc(progress.startOffset ?? 0)),
       overall: clamp01(progress.overall),
       updatedAt: Date.now(),
     }
@@ -65,22 +75,4 @@ export function overallProgress(
     .reduce((sum, length) => sum + length, 0)
   const current = chapterLengths[chapterIndex] ?? 0
   return Math.min(1, (before + current * clamp01(scrollRatio)) / total)
-}
-
-/** 中文閱讀速度，字／分鐘。 */
-const CHARS_PER_MINUTE = 350
-
-/** 依剩餘字數估算讀完全書還需要幾分鐘；沒有字數資料時回傳 null。 */
-export function remainingMinutes(
-  chapterLengths: readonly number[],
-  chapterIndex: number,
-  scrollRatio: number,
-  charsPerMinute = CHARS_PER_MINUTE,
-): number | null {
-  const total = chapterLengths.reduce((sum, length) => sum + length, 0)
-  if (total === 0) return null
-
-  const remaining = total * (1 - overallProgress(chapterLengths, chapterIndex, scrollRatio))
-  if (remaining <= 0) return 0
-  return Math.max(1, Math.round(remaining / charsPerMinute))
 }

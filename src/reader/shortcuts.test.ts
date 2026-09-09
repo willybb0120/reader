@@ -5,9 +5,10 @@ const press = (key: string, extra: Partial<KeyboardEvent> = {}) =>
   ({ key, target: document.body, ...extra }) as unknown as KeyboardEvent
 
 describe('matchShortcut', () => {
-  test('方向鍵切換章節', () => {
-    expect(matchShortcut(press('ArrowLeft'))).toBe('prevChapter')
-    expect(matchShortcut(press('ArrowRight'))).toBe('nextChapter')
+  test('方向鍵與空白鍵翻頁', () => {
+    expect(matchShortcut(press('ArrowLeft'))).toBe('prevPage')
+    expect(matchShortcut(press('ArrowRight'))).toBe('nextPage')
+    expect(matchShortcut(press(' '))).toBe('nextPage')
   })
 
   test('單鍵開啟各面板', () => {

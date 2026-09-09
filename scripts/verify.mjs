@@ -1,5 +1,6 @@
 /**
- * 用真實瀏覽器開啟建置後的閱讀器，檢查沒有 console 錯誤且內容確實渲染，並產出截圖。
+ * 用真實瀏覽器開啟建置後的閱讀器，走完整流程並產出截圖。
+ * 分頁排版依賴真實版面計算，只有這裡驗得到。
  * 用法：node scripts/verify.mjs [輸出目錄]
  */
 import { spawn } from 'node:child_process'
@@ -23,14 +24,30 @@ const fail = (message) => {
 async function waitForServer() {
   for (let i = 0; i < 60; i++) {
     try {
-      const response = await fetch(`http://localhost:${PORT}/`)
-      if (response.ok) return
+      if ((await fetch(`http://localhost:${PORT}/`)).ok) return
     } catch {
       /* 尚未啟動 */
     }
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
   fail('preview 伺服器未能啟動')
+}
+
+/** 目前頁碼、總頁數與章名，用來判斷有沒有真的翻頁 */
+const readState = (page) =>
+  page.evaluate(() => ({
+    page: Number(document.querySelector('.pager')?.dataset.page ?? -1),
+    pages: Number(document.querySelector('.pager')?.dataset.pages ?? -1),
+    title: document.querySelector('.topbar__title')?.textContent ?? '',
+    percent: document.querySelector('.pagebar')?.textContent ?? '',
+  }))
+
+/** 點閱讀區右側 = 下一頁，左側 = 上一頁 */
+async function tap(page, side) {
+  const box = await page.locator('.pager').boundingBox()
+  const x = side === 'next' ? box.x + box.width * 0.75 : box.x + box.width * 0.12
+  await page.mouse.click(x, box.y + box.height * 0.5)
+  await page.waitForTimeout(320)
 }
 
 await waitForServer()
@@ -40,9 +57,7 @@ const errors = []
 
 try {
   const page = await browser.newPage({ viewport: { width: 900, height: 1200 } })
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(msg.text())
-  })
+  page.on('console', (msg) => msg.type() === 'error' && errors.push(msg.text()))
   page.on('pageerror', (err) => errors.push(err.message))
 
   await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' })
@@ -54,60 +69,86 @@ try {
   if (cards.length !== 1) fail(`書櫃書本數量錯誤：${cards.length}`)
 
   await page.click('.book-card__open')
-  await page.waitForSelector('.chapter', { timeout: 15000 })
-  await page.screenshot({ path: `${outDir}/02-open.png` })
+  await page.waitForSelector('.pager', { timeout: 15000 })
+  await page.waitForTimeout(600)
 
+  // 頁面不該出現任何捲軸
+  const scrollable = await page.evaluate(
+    () => document.documentElement.scrollHeight - document.documentElement.clientHeight,
+  )
+  if (scrollable > 0) fail(`閱讀畫面仍可捲動 ${scrollable}px`)
+
+  // 目錄：跳到一個有內文的章節
   await page.click('[aria-label="開啟目錄"]')
   await page.waitForSelector('.drawer')
   await page.waitForTimeout(400)
-  await page.screenshot({ path: `${outDir}/03-toc.png` })
-
+  await page.screenshot({ path: `${outDir}/02-toc.png` })
   const items = await page.$$('.toc__item')
   if (items.length < 2) fail(`目錄項目過少：${items.length}`)
   await items[3].click()
-  await page.waitForTimeout(400)
+  await page.waitForTimeout(600)
 
   const text = await page.textContent('.chapter')
   if (!text || text.trim().length < 100) fail(`章節內容過短：${text?.length ?? 0} 字`)
-  await page.screenshot({ path: `${outDir}/04-chapter.png` })
+  await page.screenshot({ path: `${outDir}/03-page-1.png` })
 
-  // 閱讀設定：切到夜間主題與較大字級
+  // 分頁：長章節應該不只一頁
+  const first = await readState(page)
+  if (first.pages < 2) fail(`章節沒有分頁，總頁數 ${first.pages}`)
+  if (first.page !== 0) fail(`進入章節不是第一頁：${first.page}`)
+
+  // 點右側往下翻
+  await tap(page, 'next')
+  const second = await readState(page)
+  if (second.page !== 1) fail(`點右側沒有翻到下一頁：${first.page} → ${second.page}`)
+  await page.screenshot({ path: `${outDir}/04-page-2.png` })
+
+  // 點左側翻回來
+  await tap(page, 'prev')
+  if ((await readState(page)).page !== 0) fail('點左側沒有翻回上一頁')
+
+  // 翻到章尾再往下，應自動進入下一章第一頁
+  for (let i = 0; i < first.pages; i++) await tap(page, 'next')
+  const crossed = await readState(page)
+  if (crossed.title === first.title) fail('翻過章尾沒有接到下一章')
+  if (crossed.page !== 0) fail(`進入下一章不是第一頁：${crossed.page}`)
+  await page.screenshot({ path: `${outDir}/05-next-chapter.png` })
+
+  // 從下一章第一頁往回，應回到上一章最後一頁
+  await tap(page, 'prev')
+  const backed = await readState(page)
+  if (backed.title !== first.title) fail('往回翻沒有接回上一章')
+  if (backed.page !== backed.pages - 1) fail(`往回翻不是上一章最後一頁：${backed.page}`)
+
+  // 設定：切夜間主題
   await page.click('[aria-label="閱讀設定"]')
   await page.waitForSelector('.drawer--right')
   await page.waitForTimeout(400)
-  await page.screenshot({ path: `${outDir}/05-settings.png` })
-
+  await page.screenshot({ path: `${outDir}/06-settings.png` })
   await page.click('[data-theme-swatch="dark"]')
   await page.waitForTimeout(200)
-  const theme = await page.getAttribute('html', 'data-theme')
-  if (theme !== 'dark') fail(`主題未切換：${theme}`)
+  if ((await page.getAttribute('html', 'data-theme')) !== 'dark') fail('主題未切換')
   await page.keyboard.press('Escape')
-  await page.waitForTimeout(300)
-  await page.screenshot({ path: `${outDir}/06-dark.png` })
+  await page.waitForTimeout(400)
+  await page.screenshot({ path: `${outDir}/07-dark.png` })
 
-  // 進度：捲動後重新載入應回到原處
-  await page.evaluate(() => window.scrollTo(0, 1200))
-  await page.waitForTimeout(1200)
-  const before = await page.evaluate(() => ({
-    y: window.scrollY,
-    title: document.querySelector('.topbar__title')?.textContent,
-  }))
-
-  await page.reload({ waitUntil: 'networkidle' })
-  await page.waitForSelector('.chapter')
+  // 進度：重新載入應回到同一章同一頁
+  const before = await readState(page)
   await page.waitForTimeout(900)
-  const after = await page.evaluate(() => ({
-    y: window.scrollY,
-    title: document.querySelector('.topbar__title')?.textContent,
-  }))
-
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.pager')
+  await page.waitForTimeout(900)
+  const after = await readState(page)
   if (after.title !== before.title) fail(`重新載入後章節不同：${before.title} → ${after.title}`)
-  if (Math.abs(after.y - before.y) > 80) fail(`重新載入後捲動位置差距過大：${before.y} → ${after.y}`)
-  await page.screenshot({ path: `${outDir}/07-restored.png` })
+  if (Math.abs(after.page - before.page) > 1)
+    fail(`重新載入後頁碼差距過大：${before.page} → ${after.page}`)
+  await page.screenshot({ path: `${outDir}/08-restored.png` })
 
-  // 劃線：選一段文字 → 工具列 → 黃色劃線 → 出現在側欄
+  // 劃線：選一段文字 → 工具列 → 黃色
   await page.evaluate(() => {
-    const paragraph = document.querySelectorAll('.chapter p')[2]
+    const paragraph = [...document.querySelectorAll('.chapter p')].find(
+      (el) => (el.textContent ?? '').trim().length > 30,
+    )
     const range = document.createRange()
     range.selectNodeContents(paragraph)
     const selection = window.getSelection()
@@ -116,72 +157,70 @@ try {
     document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
   })
   await page.waitForSelector('.selection-toolbar')
-  await page.screenshot({ path: `${outDir}/08-selection.png` })
+  await page.screenshot({ path: `${outDir}/09-selection.png` })
   await page.click('[aria-label="黃色劃線"]')
   await page.waitForSelector('.chapter mark')
 
   await page.click('[aria-label="劃線與筆記"]')
   await page.waitForSelector('.annotations')
   await page.waitForTimeout(400)
-  const marks = await page.$$('.annotation')
-  if (marks.length !== 1) fail(`側欄標註數量錯誤：${marks.length}`)
-  await page.screenshot({ path: `${outDir}/09-annotations.png` })
+  if ((await page.$$('.annotation')).length !== 1) fail('側欄標註數量錯誤')
+  await page.screenshot({ path: `${outDir}/10-annotations.png` })
   await page.keyboard.press('Escape')
   await page.waitForTimeout(300)
 
   // 重新載入後劃線仍在
   await page.reload({ waitUntil: 'networkidle' })
-  await page.waitForSelector('.chapter')
-  await page.waitForTimeout(700)
-  const persisted = await page.$$('.chapter mark')
-  if (persisted.length === 0) fail('重新載入後劃線消失')
-  await page.evaluate(() =>
-    document.querySelector('.chapter mark')?.scrollIntoView({ block: 'center' }),
-  )
-  await page.waitForTimeout(300)
-  await page.screenshot({ path: `${outDir}/10-highlight-persisted.png` })
+  await page.waitForSelector('.pager')
+  await page.waitForTimeout(900)
+  if ((await page.$$('.chapter mark')).length === 0) fail('重新載入後劃線消失')
+  await page.screenshot({ path: `${outDir}/11-highlight-persisted.png` })
 
-  // 搜尋：輸入關鍵字並跳到結果
+  // 搜尋：命中處要落在目前這一頁
   await page.click('[aria-label="搜尋全書"]')
-  await page.waitForSelector('.search__field input:not([disabled])', { timeout: 20000 })
+  await page.waitForSelector('.search__field input:not([disabled])', { timeout: 25000 })
   await page.fill('.search__field input', '創造')
   await page.waitForSelector('.search__hit')
   await page.waitForTimeout(400)
   const hits = await page.$$('.search__hit')
   if (hits.length < 5) fail(`搜尋結果過少：${hits.length}`)
-  await page.screenshot({ path: `${outDir}/11-search.png` })
+  await page.screenshot({ path: `${outDir}/12-search.png` })
 
-  await hits[2].click()
+  await hits[4].click()
   await page.waitForSelector('.chapter mark[data-search-hit]')
-  await page.waitForTimeout(400)
-  await page.screenshot({ path: `${outDir}/12-search-hit.png` })
+  await page.waitForTimeout(600)
+  const onScreen = await page.evaluate(() => {
+    const mark = document.querySelector('.chapter mark[data-search-hit]')
+    const pager = document.querySelector('.pager')
+    if (!mark || !pager) return false
+    const a = mark.getBoundingClientRect()
+    const b = pager.getBoundingClientRect()
+    return a.left >= b.left - 2 && a.right <= b.right + 2
+  })
+  if (!onScreen) fail('搜尋命中處沒有落在目前這一頁')
+  await page.screenshot({ path: `${outDir}/13-search-hit.png` })
 
-  // 快捷鍵：? 開說明、T 開目錄、D 換主題
+  // 快捷鍵
   await page.keyboard.press('?')
   await page.waitForSelector('.help')
   await page.waitForTimeout(250)
-  await page.screenshot({ path: `${outDir}/13-shortcuts.png` })
-  await page.keyboard.press('Escape')
-
-  await page.keyboard.press('t')
-  await page.waitForSelector('.toc')
+  await page.screenshot({ path: `${outDir}/14-shortcuts.png` })
   await page.keyboard.press('Escape')
   await page.waitForTimeout(250)
 
-  const themeBefore = await page.getAttribute('html', 'data-theme')
-  await page.keyboard.press('d')
-  await page.waitForTimeout(150)
-  if ((await page.getAttribute('html', 'data-theme')) === themeBefore) fail('D 未切換主題')
+  const beforeKey = await readState(page)
+  await page.keyboard.press('ArrowRight')
+  await page.waitForTimeout(350)
+  if ((await readState(page)).page === beforeKey.page) fail('方向鍵沒有翻頁')
 
-  // 回到書櫃並確認進度顯示
+  // 回到書櫃
   await page.click('[aria-label="回到書櫃"]')
   await page.waitForSelector('.library__grid')
   await page.waitForTimeout(300)
-  const percent = await page.textContent('.book-card__progress')
-  if (!percent) fail('書櫃沒有顯示閱讀進度')
-  await page.screenshot({ path: `${outDir}/14-library-progress.png` })
+  if (!(await page.textContent('.book-card__progress'))) fail('書櫃沒有顯示閱讀進度')
+  await page.screenshot({ path: `${outDir}/15-library-progress.png` })
 
-  // 手機尺寸檢查：不得出現水平捲動
+  // 手機尺寸
   const phone = await browser.newPage({
     viewport: { width: 390, height: 844 },
     deviceScaleFactor: 2,
@@ -191,24 +230,18 @@ try {
   phone.on('pageerror', (err) => errors.push(err.message))
   await phone.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' })
   await phone.waitForSelector('.book-card', { timeout: 20000 })
-  await phone.screenshot({ path: `${outDir}/15-phone-library.png` })
+  await phone.screenshot({ path: `${outDir}/16-phone-library.png` })
   await phone.click('.book-card__open')
-  await phone.waitForSelector('.chapter')
-  await phone.waitForTimeout(600)
-  await phone.screenshot({ path: `${outDir}/16-phone-reading.png` })
-
+  await phone.waitForSelector('.pager')
+  await phone.waitForTimeout(800)
+  await phone.screenshot({ path: `${outDir}/17-phone-reading.png` })
   const overflow = await phone.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   )
   if (overflow > 0) fail(`手機版面有 ${overflow}px 水平溢出`)
-
-  await phone.click('[aria-label="開啟目錄"]')
-  await phone.waitForSelector('.drawer')
-  await phone.waitForTimeout(400)
-  await phone.screenshot({ path: `${outDir}/17-phone-toc.png` })
   await phone.close()
 
-  // 離線：Service Worker 註冊後斷網仍要能開啟
+  // 離線
   const offlinePage = await browser.newPage()
   await offlinePage.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' })
   await offlinePage.evaluate(() => navigator.serviceWorker.ready)
@@ -220,10 +253,10 @@ try {
   await offlinePage.context().setOffline(false)
   await offlinePage.close()
 
-  const errorsToReport = errors.filter((e) => !/favicon|fonts\.g/i.test(e))
-  if (errorsToReport.length > 0) fail(`console 錯誤：\n${errorsToReport.join('\n')}`)
+  const reported = errors.filter((e) => !/favicon|fonts\.g/i.test(e))
+  if (reported.length > 0) fail(`console 錯誤：\n${reported.join('\n')}`)
 
-  console.log(`✓ 閱讀器渲染正常，目錄 ${items.length} 項，截圖已存至 ${outDir}/`)
+  console.log(`✓ 分頁閱讀正常，截圖已存至 ${outDir}/`)
 } finally {
   await browser.close()
   server.kill()

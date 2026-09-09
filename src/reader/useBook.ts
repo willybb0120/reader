@@ -1,30 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { parseEpub, type Book, type Chapter } from '../epub/parseEpub'
+import type { Entry } from './ChapterView'
 import { loadBookFile, touchBook } from '../store/library'
-import { loadProgress, overallProgress, remainingMinutes, saveProgress } from '../store/progress'
+import { loadProgress, overallProgress, saveProgress } from '../store/progress'
 import { withTrimmedImages } from './trimImages'
 
 export type Status = 'idle' | 'loading' | 'ready' | 'error'
 
 const SAVE_INTERVAL_MS = 800
 
-function scrollRatio(): number {
-  const scrollable = document.documentElement.scrollHeight - window.innerHeight
-  return scrollable > 0 ? window.scrollY / scrollable : 0
-}
-
 /** 開啟書櫃中的某一本書，並持續記錄閱讀進度。id 為 null 時不載入任何書。 */
 export function useBook(id: string | null) {
   const [book, setBook] = useState<Book | null>(null)
   const [chapter, setChapter] = useState<Chapter | null>(null)
-  const [fragment, setFragment] = useState<string | undefined>()
-  const [initialScrollRatio, setInitialScrollRatio] = useState(0)
+  const [entry, setEntry] = useState<Entry>({ kind: 'first' })
   const [status, setStatus] = useState<Status>(id ? 'loading' : 'idle')
   const [error, setError] = useState('')
   const [chapterTexts, setChapterTexts] = useState<string[]>([])
   const [chapterTitles, setChapterTitles] = useState<string[]>([])
   const [progress, setProgress] = useState(0)
-  const [minutesLeft, setMinutesLeft] = useState<number | null>(null)
 
   const bookRef = useRef<Book | null>(null)
   const chapterRef = useRef<Chapter | null>(null)
@@ -70,8 +64,7 @@ export function useBook(id: string | null) {
         setBook(parsed)
         setChapterTexts([])
         setChapterTitles([])
-        setFragment(undefined)
-        setInitialScrollRatio(saved?.scrollRatio ?? 0)
+        setEntry({ kind: 'offset', offset: saved?.startOffset ?? 0 })
         setChapter({ ...raw, html: await withTrimmedImages(raw.html) })
         setStatus('ready')
       } catch (cause) {
@@ -107,57 +100,44 @@ export function useBook(id: string | null) {
     }
   }, [book])
 
-  const goToChapter = useCallback(async (index: number, targetFragment?: string) => {
-    const current = bookRef.current
-    if (!current || index < 0 || index >= current.spine.length) return
-    const raw = await current.getChapter(index)
-    setInitialScrollRatio(0)
-    setFragment(targetFragment)
-    setChapter({ ...raw, html: await withTrimmedImages(raw.html) })
-  }, [])
+  const goToChapter = useCallback(
+    async (index: number, target: Entry = { kind: 'first' }) => {
+      const current = bookRef.current
+      if (!current || index < 0 || index >= current.spine.length) return
+      const raw = await current.getChapter(index)
+      setEntry(target)
+      setChapter({ ...raw, html: await withTrimmedImages(raw.html) })
+    },
+    [],
+  )
 
-  // 捲動時更新進度並節流寫入
-  useEffect(() => {
-    if (status !== 'ready' || !id) return
-
-    const onScroll = () => {
-      const ratio = scrollRatio()
+  /** 由閱讀畫面回報目前頁面的起始字元位置 */
+  const reportPosition = useCallback(
+    (charOffset: number, chapterLength: number) => {
       const index = chapterRef.current?.index ?? 0
+      const ratio = chapterLength > 0 ? charOffset / chapterLength : 0
       const overall = overallProgress(lengthsRef.current, index, ratio)
       setProgress(overall)
-      setMinutesLeft(remainingMinutes(lengthsRef.current, index, ratio))
 
+      if (!id) return
       const now = Date.now()
       if (now - lastSaveRef.current < SAVE_INTERVAL_MS) return
       lastSaveRef.current = now
-      saveProgress(id, { chapterIndex: index, scrollRatio: ratio, overall })
-    }
-
-    onScroll()
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => {
-      window.removeEventListener('scroll', onScroll)
-      const ratio = scrollRatio()
-      const index = chapterRef.current?.index ?? 0
-      saveProgress(id, {
-        chapterIndex: index,
-        scrollRatio: ratio,
-        overall: overallProgress(lengthsRef.current, index, ratio),
-      })
-    }
-  }, [status, id, chapter, chapterLengths])
+      saveProgress(id, { chapterIndex: index, ratio, overall, startOffset: charOffset })
+    },
+    [id],
+  )
 
   return {
     book,
     chapter,
-    fragment,
-    initialScrollRatio,
+    entry,
     status,
     error,
     chapterTexts,
     chapterTitles,
     progress,
-    minutesLeft,
+    reportPosition,
     goToChapter,
   }
 }
