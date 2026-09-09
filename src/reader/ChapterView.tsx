@@ -72,6 +72,8 @@ export function ChapterView({
   const [layout, setLayout] = useState<PageLayout>(EMPTY_LAYOUT)
   const [pages, setPages] = useState(1)
   const [page, setPage] = useState(0)
+  /** 換章或跳頁時頁碼會大幅跳動，動畫方向會與實際翻頁方向相反，所以直接不做動畫 */
+  const [animate, setAnimate] = useState(false)
   const pageRef = useRef(0)
   const layoutRef = useRef(EMPTY_LAYOUT)
   pageRef.current = page
@@ -116,6 +118,7 @@ export function ChapterView({
       const element = content.querySelector(selector)
       next = element ? elementPage(content, element, measured) : 0
     }
+    setAnimate(false)
     setPage(Math.min(Math.max(0, next), total - 1))
   }, [])
 
@@ -150,10 +153,20 @@ export function ChapterView({
       const next = pageRef.current + delta
       if (next < 0) onPastStart()
       else if (next >= pages) onPastEnd()
-      else setPage(next)
+      else {
+        setAnimate(true)
+        setPage(next)
+      }
     },
     [pages, onPastEnd, onPastStart],
   )
+
+  // 版面定位完成後才把動畫打開，讓下一次翻頁滑得順
+  useEffect(() => {
+    if (animate) return
+    const frame = requestAnimationFrame(() => setAnimate(true))
+    return () => cancelAnimationFrame(frame)
+  }, [animate])
 
   useEffect(() => {
     pagerRef.current = { turn }
@@ -259,6 +272,7 @@ export function ChapterView({
         className="chapter"
         ref={contentRef}
         lang="zh-TW"
+        data-animate={animate}
         style={{ transform: `translateX(${-translateForPage(page, layout)}px)` }}
       />
     </div>
