@@ -51,6 +51,12 @@ src/
   在捲動版面會撐出空洞。裁切在注入畫面前完成，重繪不會退回原圖。
 - **白底線稿另外處理**：亮色主題用 multiply 融入紙色，暗色主題反相後用 lighten。
 - **章節 HTML 由自寫的允許清單清理**，不引入 DOMPurify——內容來源固定，需求單純。
+- **朗讀用瀏覽器內建 TTS**：免費、離線、不必把書的內容送到外部服務，
+  代價是音質取決於作業系統裝了什麼語音。逐句送稿（每句上限 120 字），
+  避開 Chrome 對長字串會截斷的問題。
+- **朗讀高亮不重設 innerHTML**：改用單獨的 effect 解開上一句、包住新的一句，
+  否則每念一句都會觸發重新分頁。高亮只用背景色，不加 padding 或邊框，
+  才不會動到換行與分頁位置。
 
 ## 功能與分支
 
@@ -68,6 +74,7 @@ src/
 | `feat/offline` | Service Worker 離線快取、可安裝 |
 | `feat/paginated-reading` | 分頁閱讀、點擊／滑動翻頁、跨章連續、移除捲動 |
 | `feat/cross-chapter-slide` | 跨章翻頁也有正確方向的滑動動畫 |
+| `feat/narration` | 朗讀：逐句高亮、自動翻頁、跨章接續、語音與語速設定 |
 
 ## 錯誤處理
 
@@ -78,11 +85,13 @@ src/
 
 ## 非目標
 
-雲端同步、帳號、DRM、PDF/MOBI、朗讀、翻譯、直排、捲動閱讀模式。
+雲端同步、帳號、DRM、PDF/MOBI、雲端語音、翻譯、直排、捲動閱讀模式。
 
 ## 測試策略
 
 - `src/epub`、`src/store`、`src/reader` 的純邏輯採 TDD，共 95 個單元測試
 - 分頁的版面量測（`pageMetrics.ts`）依賴真實排版，jsdom 量不到，只由 verify.mjs 驗證
+- 朗讀無法在 headless 環境發聲（0 個語音），verify.mjs 以假的語音引擎驗證
+  句子推進、自動翻頁與高亮；音質只能由人耳確認
 - `src/epub/realBook.test.ts` 以 `public/books` 的真實 EPUB 驗證解析
 - `scripts/verify.mjs` 以 Playwright 走完整流程並產出截圖，同時檢查 console 無錯誤

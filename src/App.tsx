@@ -5,6 +5,8 @@ import { matchShortcut } from './reader/shortcuts'
 import { useAnnotations } from './reader/useAnnotations'
 import { useBook } from './reader/useBook'
 import { useLibrary } from './reader/useLibrary'
+import { useNarration } from './reader/useNarration'
+import { PlayerBar } from './ui/PlayerBar'
 import type { SearchHit } from './reader/search'
 import { toMarkdown, type Annotation, type Color } from './store/annotations'
 import { LIMITS, type Theme } from './store/settings'
@@ -80,6 +82,23 @@ export function App() {
     [jump],
   )
 
+  const reveal = useCallback((offset: number) => pagerRef.current?.reveal(offset), [])
+
+  const narrateNextChapter = useCallback(() => {
+    if (chapter && book && chapter.index < book.spine.length - 1) {
+      void goToChapter(chapter.index + 1, { kind: 'first', slide: 'forward' })
+    }
+  }, [chapter, book, goToChapter])
+
+  const narration = useNarration({
+    chapterText: chapterTexts[chapter?.index ?? -1] ?? '',
+    lang: book?.metadata.language || 'zh-TW',
+    rate: settings.rate,
+    voiceUri: settings.voiceUri || undefined,
+    onReveal: reveal,
+    onChapterEnd: narrateNextChapter,
+  })
+
   const openFromLibrary = (id: string) => {
     localStorage.setItem(LAST_BOOK_KEY, id)
     setBookId(id)
@@ -128,7 +147,8 @@ export function App() {
         }
         default:
           if (!chapter) return
-          if (action === 'prevPage') pagerRef.current?.turn(-1)
+          if (action === 'narrate') narration.toggle()
+          else if (action === 'prevPage') pagerRef.current?.turn(-1)
           else if (action === 'nextPage') pagerRef.current?.turn(1)
           else if (action === 'library') closeBook()
           else if (action === 'toc') setPanel((c) => (c === 'toc' ? null : 'toc'))
@@ -313,9 +333,23 @@ export function App() {
             onAnnotationClick={onAnnotationClick}
             onPastEnd={onPastEnd}
             onPastStart={onPastStart}
+            speakingRange={narration.sentence}
             onPositionChange={reportPosition}
+            onUserTurn={narration.playing ? narration.seekToOffset : undefined}
           />
-          <div className="pagebar">{Math.round(progress * 100)}%</div>
+          <PlayerBar
+            supported={narration.supported}
+            playing={narration.playing}
+            percent={Math.round(progress * 100)}
+            rate={settings.rate}
+            voices={narration.voices}
+            voiceUri={settings.voiceUri || (narration.defaultVoice?.uri ?? '')}
+            onToggle={narration.toggle}
+            onPrevious={narration.previous}
+            onNext={narration.next}
+            onRate={(rate) => updateSettings({ rate })}
+            onVoice={(voiceUri) => updateSettings({ voiceUri })}
+          />
         </main>
       )}
 

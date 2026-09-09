@@ -29,6 +29,8 @@ export type Entry = EntryTarget & { slide?: 'forward' | 'backward' }
 
 export interface PagerApi {
   turn: (delta: number) => void
+  /** 確保這個字元位移落在目前這一頁，不在就翻過去 */
+  reveal: (offset: number) => void
 }
 
 interface ChapterViewProps {
@@ -39,6 +41,8 @@ interface ChapterViewProps {
   layoutKey: string
   /** 搜尋命中的範圍，會另外標示 */
   highlightRange?: { start: number; end: number }
+  /** 正在朗讀的句子範圍 */
+  speakingRange?: { start: number; end: number }
   /** 讓外部（鍵盤快捷鍵）也能翻頁 */
   pagerRef: React.RefObject<PagerApi | null>
   onNavigate: (chapterIndex: number, fragment?: string) => void
@@ -50,6 +54,8 @@ interface ChapterViewProps {
   onPastStart: () => void
   /** 目前頁面起始位置改變，回報給進度記錄 */
   onPositionChange: (charOffset: number, chapterLength: number) => void
+  /** 使用者自己翻頁（不含朗讀或搜尋造成的跳頁） */
+  onUserTurn?: (charOffset: number) => void
 }
 
 const EMPTY_LAYOUT: PageLayout = { pageWidth: 0, gap: 0 }
@@ -66,6 +72,7 @@ export function ChapterView({
   entry,
   layoutKey,
   highlightRange,
+  speakingRange,
   pagerRef,
   onNavigate,
   onSelect,
@@ -73,6 +80,7 @@ export function ChapterView({
   onPastEnd,
   onPastStart,
   onPositionChange,
+  onUserTurn,
 }: ChapterViewProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -102,6 +110,23 @@ export function ChapterView({
       wrapRange(content, highlightRange.start, highlightRange.end, { searchHit: 'true' })
     }
   }, [chapter.html, annotations, highlightRange])
+
+  // 朗讀高亮單獨處理：重設 innerHTML 會觸發重新分頁，每念一句都重排太浪費
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content) return
+
+    for (const mark of content.querySelectorAll('mark[data-speaking]')) {
+      const parent = mark.parentNode
+      if (!parent) continue
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark)
+      mark.remove()
+      parent.normalize()
+    }
+    if (speakingRange) {
+      wrapRange(content, speakingRange.start, speakingRange.end, { speaking: 'true' })
+    }
+  }, [speakingRange, chapter.html, annotations, highlightRange])
 
   /** 重新量測分頁，並停在 target 指定的位置 */
   const relayout = useCallback((target: Entry) => {
@@ -170,10 +195,15 @@ export function ChapterView({
       else if (next >= pages) onPastEnd()
       else {
         setAnimate(true)
+        setEnterOffset(0)
         setPage(next)
+        const content = contentRef.current
+        if (content && onUserTurn) {
+          onUserTurn(charOffsetAtPage(content, next, layoutRef.current))
+        }
       }
     },
-    [pages, onPastEnd, onPastStart],
+    [pages, onPastEnd, onPastStart, onUserTurn],
   )
 
   // 先畫出入場位置，下一幀才打開動畫並滑到定位
@@ -186,12 +216,23 @@ export function ChapterView({
     return () => cancelAnimationFrame(frame)
   }, [animate])
 
+  /** 讓朗讀把畫面翻到指定位置；已經在同一頁就不動 */
+  const reveal = useCallback((offset: number) => {
+    const content = contentRef.current
+    if (!content) return
+    const target = pageForCharOffset(content, offset, layoutRef.current)
+    if (target === pageRef.current) return
+    setAnimate(true)
+    setEnterOffset(0)
+    setPage(target)
+  }, [])
+
   useEffect(() => {
-    pagerRef.current = { turn }
+    pagerRef.current = { turn, reveal }
     return () => {
       pagerRef.current = null
     }
-  }, [pagerRef, turn])
+  }, [pagerRef, turn, reveal])
 
   // 點擊翻頁：右側 2/3 往下、左側 1/3 往回
   useEffect(() => {

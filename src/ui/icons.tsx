@@ -65,3 +65,35 @@ export function LibraryIcon({ size = 20 }: IconProps) {
     </svg>
   )
 }
+
+export function PlayIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M7 4.8l11 7.2-11 7.2z" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+export function PauseIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M8 5v14M16 5v14" strokeWidth={2.2} />
+    </svg>
+  )
+}
+
+export function PreviousIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M17 6l-8 6 8 6zM6 5v14" />
+    </svg>
+  )
+}
+
+export function NextIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M7 6l8 6-8 6zM18 5v14" />
+    </svg>
+  )
+}

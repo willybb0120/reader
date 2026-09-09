@@ -12,6 +12,10 @@ export interface Settings {
   /** 字距（em） */
   letterSpacing: number
   justify: boolean
+  /** 朗讀速度 */
+  rate: number
+  /** 朗讀語音的 voiceURI，空字串代表用預設 */
+  voiceUri: string
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -22,6 +26,8 @@ export const DEFAULT_SETTINGS: Settings = {
   readingWidth: 34,
   letterSpacing: 0,
   justify: true,
+  rate: 1,
+  voiceUri: '',
 }
 
 export const LIMITS = {
@@ -29,6 +35,7 @@ export const LIMITS = {
   lineHeight: [1.4, 2.6],
   readingWidth: [26, 52],
   letterSpacing: [0, 0.16],
+  rate: [0.5, 2.5],
 } as const satisfies Record<string, readonly [number, number]>
 
 const STORAGE_KEY = 'reader:settings'
@@ -52,6 +59,8 @@ function normalize(raw: unknown): Settings {
     readingWidth: clamp(input.readingWidth, LIMITS.readingWidth, DEFAULT_SETTINGS.readingWidth),
     letterSpacing: clamp(input.letterSpacing, LIMITS.letterSpacing, DEFAULT_SETTINGS.letterSpacing),
     justify: typeof input.justify === 'boolean' ? input.justify : DEFAULT_SETTINGS.justify,
+    rate: clamp(input.rate, LIMITS.rate, DEFAULT_SETTINGS.rate),
+    voiceUri: typeof input.voiceUri === 'string' ? input.voiceUri : DEFAULT_SETTINGS.voiceUri,
   }
 }
 

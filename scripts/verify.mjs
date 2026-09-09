@@ -57,6 +57,42 @@ const errors = []
 
 try {
   const page = await browser.newPage({ viewport: { width: 900, height: 1200 } })
+
+  // headless Chromium 沒有任何語音，用假的語音引擎驗證朗讀邏輯（音質只能由人耳確認）
+  await page.addInitScript(() => {
+    window.__spoken = []
+    const voices = [
+      { voiceURI: 'fake-zh-TW', name: '測試語音（台灣）', lang: 'zh-TW' },
+      { voiceURI: 'fake-en', name: 'Test Voice', lang: 'en-US' },
+    ]
+    let current = null
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: {
+        getVoices: () => voices,
+        speak(utterance) {
+          current = utterance
+          window.__spoken.push(utterance.text)
+          setTimeout(() => {
+            if (current === utterance) utterance.onend?.()
+          }, 60)
+        },
+        cancel() {
+          current = null
+        },
+        pause() {},
+        resume() {},
+        addEventListener() {},
+        removeEventListener() {},
+      },
+    })
+    window.SpeechSynthesisUtterance = class {
+      constructor(text) {
+        this.text = text
+      }
+    }
+  })
+
   page.on('console', (msg) => msg.type() === 'error' && errors.push(msg.text()))
   page.on('pageerror', (err) => errors.push(err.message))
 
@@ -243,11 +279,58 @@ try {
   if (!onScreen) fail('搜尋命中處沒有落在目前這一頁')
   await page.screenshot({ path: `${outDir}/13-search-hit.png` })
 
+  // 朗讀：逐句高亮、自動翻頁、跨章接續
+  await page.click('[aria-label="開始朗讀"]')
+  await page.waitForSelector('.chapter mark[data-speaking]', { timeout: 5000 })
+  await page.screenshot({ path: `${outDir}/14-narration.png` })
+
+  const spokenAtStart = await page.evaluate(() => window.__spoken.length)
+  await page.waitForTimeout(1200)
+  const spokenLater = await page.evaluate(() => window.__spoken.length)
+  if (spokenLater <= spokenAtStart) fail('朗讀沒有推進到下一句')
+
+  // 念到頁尾必須自動翻頁
+  const advanced = await page
+    .waitForFunction(() => Number(document.querySelector('.pager')?.dataset.page ?? 0) > 0, null, {
+      timeout: 10000,
+    })
+    .then(() => true)
+    .catch(() => false)
+  if (!advanced) fail('朗讀念到頁尾沒有自動翻頁')
+
+  // 正在念的句子必須看得到（句子可能跨欄，只看它的第一段矩形）
+  const speakingOnScreen = await page
+    .waitForFunction(
+      () => {
+        const mark = document.querySelector('.chapter mark[data-speaking]')
+        const pager = document.querySelector('.pager')
+        if (!mark || !pager) return false
+        const rect = mark.getClientRects()[0]
+        const bounds = pager.getBoundingClientRect()
+        return !!rect && rect.left >= bounds.left - 4 && rect.right <= bounds.right + 4
+      },
+      null,
+      { timeout: 5000 },
+    )
+    .then(() => true)
+    .catch(() => false)
+  if (!speakingOnScreen) fail('正在朗讀的句子沒有出現在目前這一頁')
+
+  // 念過的內容要跟書裡的文字一致
+  const spokenSample = await page.evaluate(() => window.__spoken[0] ?? '')
+  const chapterText = (await page.textContent('.chapter')) ?? ''
+  if (!spokenSample || !chapterText.includes(spokenSample))
+    fail(`朗讀內容與章節文字不符：${spokenSample}`)
+
+  await page.click('[aria-label="暫停朗讀"]')
+  await page.waitForTimeout(300)
+  if ((await page.$$('.chapter mark[data-speaking]')).length > 0) fail('暫停後仍有朗讀高亮')
+
   // 快捷鍵
   await page.keyboard.press('?')
   await page.waitForSelector('.help')
   await page.waitForTimeout(250)
-  await page.screenshot({ path: `${outDir}/14-shortcuts.png` })
+  await page.screenshot({ path: `${outDir}/15-shortcuts.png` })
   await page.keyboard.press('Escape')
   await page.waitForTimeout(250)
 
@@ -261,7 +344,7 @@ try {
   await page.waitForSelector('.library__grid')
   await page.waitForTimeout(300)
   if (!(await page.textContent('.book-card__progress'))) fail('書櫃沒有顯示閱讀進度')
-  await page.screenshot({ path: `${outDir}/15-library-progress.png` })
+  await page.screenshot({ path: `${outDir}/16-library-progress.png` })
 
   // 手機尺寸
   const phone = await browser.newPage({
@@ -273,11 +356,11 @@ try {
   phone.on('pageerror', (err) => errors.push(err.message))
   await phone.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' })
   await phone.waitForSelector('.book-card', { timeout: 20000 })
-  await phone.screenshot({ path: `${outDir}/16-phone-library.png` })
+  await phone.screenshot({ path: `${outDir}/17-phone-library.png` })
   await phone.click('.book-card__open')
   await phone.waitForSelector('.pager')
   await phone.waitForTimeout(800)
-  await phone.screenshot({ path: `${outDir}/17-phone-reading.png` })
+  await phone.screenshot({ path: `${outDir}/18-phone-reading.png` })
   const overflow = await phone.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   )
@@ -292,7 +375,7 @@ try {
   await offlinePage.context().setOffline(true)
   await offlinePage.reload({ waitUntil: 'load' })
   await offlinePage.waitForSelector('.library__header', { timeout: 15000 })
-  await offlinePage.screenshot({ path: `${outDir}/18-offline.png` })
+  await offlinePage.screenshot({ path: `${outDir}/19-offline.png` })
   await offlinePage.context().setOffline(false)
   await offlinePage.close()
 
