@@ -47,7 +47,7 @@ async function tap(page, side) {
   const box = await page.locator('.pager').boundingBox()
   const x = side === 'next' ? box.x + box.width * 0.75 : box.x + box.width * 0.12
   await page.mouse.click(x, box.y + box.height * 0.5)
-  await page.waitForTimeout(320)
+  await page.waitForTimeout(450)
 }
 
 await waitForServer()
@@ -107,41 +107,61 @@ try {
   await tap(page, 'prev')
   if ((await readState(page)).page !== 0) fail('點左側沒有翻回上一頁')
 
-  // 監聽 transform 過場，用來確認動畫只在章內翻頁出現
+  // 記錄每次 transform 過場的實際移動方向：負數是往左（下一頁），正數是往右（上一頁）
   await page.evaluate(() => {
-    window.__transitions = 0
-    document
-      .querySelector('.chapter')
-      .addEventListener('transitionstart', (event) => {
-        if (event.propertyName === 'transform') window.__transitions++
-      })
+    const el = document.querySelector('.chapter')
+    const x = () => new DOMMatrix(getComputedStyle(el).transform).m41
+    window.__moves = []
+    let from = null
+    el.addEventListener('transitionstart', (event) => {
+      if (event.propertyName === 'transform') from = x()
+    })
+    el.addEventListener('transitionend', (event) => {
+      if (event.propertyName !== 'transform' || from === null) return
+      window.__moves.push(x() - from)
+      from = null
+    })
   })
 
-  // 章內翻頁要有滑動動畫
-  await page.evaluate(() => (window.__transitions = 0))
+  const lastMove = () => page.evaluate(() => window.__moves.at(-1) ?? null)
+  const resetMoves = () => page.evaluate(() => (window.__moves.length = 0))
+
+  // 章內翻頁：往下要往左滑，往回要往右滑
+  await resetMoves()
   await tap(page, 'next')
-  if ((await page.evaluate(() => window.__transitions)) === 0) fail('章內翻頁沒有滑動動畫')
+  const inNext = await lastMove()
+  if (inNext === null) fail('章內往下翻沒有動畫')
+  if (inNext >= 0) fail(`章內往下翻的動畫方向相反：${inNext}`)
+
+  await resetMoves()
+  await tap(page, 'prev')
+  const inPrev = await lastMove()
+  if (inPrev === null) fail('章內往回翻沒有動畫')
+  if (inPrev <= 0) fail(`章內往回翻的動畫方向相反：${inPrev}`)
 
   // 翻到章尾
   while ((await readState(page)).page < first.pages - 1) await tap(page, 'next')
 
-  // 跨章那一下不能有動畫，否則畫面會往反方向滑
-  await page.evaluate(() => (window.__transitions = 0))
+  // 跨章往下：一樣要有動畫，而且要往左滑
+  await resetMoves()
   await tap(page, 'next')
   const crossed = await readState(page)
   if (crossed.title === first.title) fail('翻過章尾沒有接到下一章')
   if (crossed.page !== 0) fail(`進入下一章不是第一頁：${crossed.page}`)
-  if ((await page.evaluate(() => window.__transitions)) > 0)
-    fail('換章時仍有過場動畫，畫面會往反方向滑')
+  const crossNext = await lastMove()
+  if (crossNext === null) fail('跨章往下翻沒有動畫')
+  if (crossNext >= 0) fail(`跨章往下翻的動畫方向相反：${crossNext}`)
   await page.screenshot({ path: `${outDir}/05-next-chapter.png` })
 
-  // 從下一章第一頁往回，應回到上一章最後一頁，同樣不該有動畫
-  await page.evaluate(() => (window.__transitions = 0))
+  // 跨章往回：要有動畫，而且要往右滑
+  await resetMoves()
   await tap(page, 'prev')
   const backed = await readState(page)
   if (backed.title !== first.title) fail('往回翻沒有接回上一章')
   if (backed.page !== backed.pages - 1) fail(`往回翻不是上一章最後一頁：${backed.page}`)
-  if ((await page.evaluate(() => window.__transitions)) > 0) fail('往回換章時仍有過場動畫')
+  const crossPrev = await lastMove()
+  if (crossPrev === null) fail('跨章往回翻沒有動畫')
+  if (crossPrev <= 0) fail(`跨章往回翻的動畫方向相反：${crossPrev}`)
 
   // 設定：切夜間主題
   await page.click('[aria-label="閱讀設定"]')

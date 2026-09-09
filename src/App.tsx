@@ -153,11 +153,11 @@ export function App() {
   }, [])
 
   const onPastEnd = useCallback(() => {
-    if (chapter) jump(chapter.index + 1, { kind: 'first' })
+    if (chapter) jump(chapter.index + 1, { kind: 'first', slide: 'forward' })
   }, [chapter, jump])
 
   const onPastStart = useCallback(() => {
-    if (chapter) jump(chapter.index - 1, { kind: 'last' })
+    if (chapter) jump(chapter.index - 1, { kind: 'last', slide: 'backward' })
   }, [chapter, jump])
 
   const draftFrom = (sel: TextSelection, color: Color) => ({
