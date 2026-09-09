@@ -19,6 +19,7 @@ describe('matchShortcut', () => {
     expect(matchShortcut(press('a'))).toBe('settings')
     expect(matchShortcut(press('l'))).toBe('library')
     expect(matchShortcut(press('?'))).toBe('help')
+    expect(matchShortcut(press('p'))).toBe('narrate')
   })
 
   test('大寫也有效', () => {

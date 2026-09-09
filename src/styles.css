@@ -1111,3 +1111,70 @@ kbd {
     font-size: 1.25rem;
   }
 }
+
+/* ---------- 朗讀 ---------- */
+
+.chapter mark[data-speaking] {
+  /* 只用背景色，不加 padding 或邊框，換行與分頁位置才不會被動到 */
+  color: inherit;
+  background: var(--accent-soft);
+  border-radius: 2px;
+}
+
+:root[data-theme='dark'] .chapter mark[data-speaking] {
+  background: #33302a;
+}
+
+.pagebar--player {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding-inline: 0.5rem;
+}
+
+.pagebar--player .icon-button {
+  width: 2rem;
+  height: 2rem;
+  color: var(--ink-soft);
+}
+
+.pagebar--player .icon-button[aria-pressed='true'] {
+  color: var(--accent);
+}
+
+.pagebar__select {
+  max-width: 8rem;
+  padding: 0.2rem 0.35rem;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+
+.pagebar__select--voice {
+  max-width: 10rem;
+  text-overflow: ellipsis;
+}
+
+.pagebar__percent {
+  margin-inline-start: auto;
+  padding-inline-end: 0.25rem;
+}
+
+.pagebar--player .pagebar__percent {
+  position: absolute;
+  right: max(1.25rem, env(safe-area-inset-right));
+}
+
+.reader {
+  position: relative;
+}
+
+@media (max-width: 34rem) {
+  .pagebar__select--voice {
+    display: none;
+  }
+}

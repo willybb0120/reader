@@ -43,3 +43,24 @@ describe('閱讀設定', () => {
     expect(loadSettings()).toEqual(DEFAULT_SETTINGS)
   })
 })
+
+describe('朗讀設定', () => {
+  beforeEach(() => localStorage.clear())
+
+  test('預設語速為 1，語音留空表示用系統預設', () => {
+    expect(loadSettings().rate).toBe(1)
+    expect(loadSettings().voiceUri).toBe('')
+  })
+
+  test('語速超出範圍會被夾回來', () => {
+    localStorage.setItem('reader:settings', JSON.stringify({ rate: 9 }))
+
+    expect(loadSettings().rate).toBe(2.5)
+  })
+
+  test('記住選過的語音', () => {
+    saveSettings({ ...DEFAULT_SETTINGS, voiceUri: 'Microsoft HsiaoChen' })
+
+    expect(loadSettings().voiceUri).toBe('Microsoft HsiaoChen')
+  })
+})

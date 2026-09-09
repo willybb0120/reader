@@ -10,6 +10,7 @@ export type ShortcutAction =
   | 'fontUp'
   | 'fontDown'
   | 'cycleTheme'
+  | 'narrate'
   | 'close'
 
 const BY_KEY: Record<string, ShortcutAction> = {
@@ -28,6 +29,7 @@ const BY_KEY: Record<string, ShortcutAction> = {
   '-': 'fontDown',
   _: 'fontDown',
   d: 'cycleTheme',
+  p: 'narrate',
 }
 
 /** 供說明面板顯示的快捷鍵一覽。 */
@@ -41,6 +43,7 @@ export const SHORTCUT_HELP: ReadonlyArray<{ keys: string; description: string }>
   { keys: 'L', description: '回到書櫃' },
   { keys: '+ / -', description: '放大 / 縮小字級' },
   { keys: 'D', description: '切換主題' },
+  { keys: 'P', description: '朗讀 / 暫停' },
   { keys: '?', description: '這份說明' },
   { keys: 'Esc', description: '關閉面板' },
 ]
