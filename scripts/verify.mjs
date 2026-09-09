@@ -107,18 +107,41 @@ try {
   await tap(page, 'prev')
   if ((await readState(page)).page !== 0) fail('點左側沒有翻回上一頁')
 
-  // 翻到章尾再往下，應自動進入下一章第一頁
-  for (let i = 0; i < first.pages; i++) await tap(page, 'next')
+  // 監聽 transform 過場，用來確認動畫只在章內翻頁出現
+  await page.evaluate(() => {
+    window.__transitions = 0
+    document
+      .querySelector('.chapter')
+      .addEventListener('transitionstart', (event) => {
+        if (event.propertyName === 'transform') window.__transitions++
+      })
+  })
+
+  // 章內翻頁要有滑動動畫
+  await page.evaluate(() => (window.__transitions = 0))
+  await tap(page, 'next')
+  if ((await page.evaluate(() => window.__transitions)) === 0) fail('章內翻頁沒有滑動動畫')
+
+  // 翻到章尾
+  while ((await readState(page)).page < first.pages - 1) await tap(page, 'next')
+
+  // 跨章那一下不能有動畫，否則畫面會往反方向滑
+  await page.evaluate(() => (window.__transitions = 0))
+  await tap(page, 'next')
   const crossed = await readState(page)
   if (crossed.title === first.title) fail('翻過章尾沒有接到下一章')
   if (crossed.page !== 0) fail(`進入下一章不是第一頁：${crossed.page}`)
+  if ((await page.evaluate(() => window.__transitions)) > 0)
+    fail('換章時仍有過場動畫，畫面會往反方向滑')
   await page.screenshot({ path: `${outDir}/05-next-chapter.png` })
 
-  // 從下一章第一頁往回，應回到上一章最後一頁
+  // 從下一章第一頁往回，應回到上一章最後一頁，同樣不該有動畫
+  await page.evaluate(() => (window.__transitions = 0))
   await tap(page, 'prev')
   const backed = await readState(page)
   if (backed.title !== first.title) fail('往回翻沒有接回上一章')
   if (backed.page !== backed.pages - 1) fail(`往回翻不是上一章最後一頁：${backed.page}`)
+  if ((await page.evaluate(() => window.__transitions)) > 0) fail('往回換章時仍有過場動畫')
 
   // 設定：切夜間主題
   await page.click('[aria-label="閱讀設定"]')

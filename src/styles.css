@@ -362,8 +362,12 @@ button {
   font-weight: 400;
   text-align: var(--text-align);
   overflow-wrap: break-word;
-  transition: transform 0.22s cubic-bezier(0.22, 0.8, 0.3, 1);
   will-change: transform;
+}
+
+/* 只有章內翻頁才滑動；換章與跳頁是直接定位 */
+.chapter[data-animate='true'] {
+  transition: transform 0.22s cubic-bezier(0.22, 0.8, 0.3, 1);
 }
 
 /* 分頁版面下，標題與圖片不該被切成兩半 */
