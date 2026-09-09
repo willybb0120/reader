@@ -13,12 +13,19 @@ export interface TextSelection {
 }
 
 /** 進入章節時要停在哪裡 */
-export type Entry =
+export type EntryTarget =
   | { kind: 'first' }
   | { kind: 'last' }
   | { kind: 'offset'; offset: number }
   | { kind: 'fragment'; id: string }
   | { kind: 'annotation'; id: string }
+
+/**
+ * slide 指定新章節要從哪一側滑進來。
+ * 換章時頁碼會歸零或跳到章尾，位移量與翻頁方向無關，
+ * 所以得另外指定方向，否則動畫會往反方向跑。
+ */
+export type Entry = EntryTarget & { slide?: 'forward' | 'backward' }
 
 export interface PagerApi {
   turn: (delta: number) => void
@@ -72,8 +79,9 @@ export function ChapterView({
   const [layout, setLayout] = useState<PageLayout>(EMPTY_LAYOUT)
   const [pages, setPages] = useState(1)
   const [page, setPage] = useState(0)
-  /** 換章或跳頁時頁碼會大幅跳動，動畫方向會與實際翻頁方向相反，所以直接不做動畫 */
   const [animate, setAnimate] = useState(false)
+  /** 換章時的入場位移：先把新章擺在相鄰的一頁外，再滑到定位 */
+  const [enterOffset, setEnterOffset] = useState(0)
   const pageRef = useRef(0)
   const layoutRef = useRef(EMPTY_LAYOUT)
   pageRef.current = page
@@ -119,6 +127,13 @@ export function ChapterView({
       next = element ? elementPage(content, element, measured) : 0
     }
     setAnimate(false)
+    setEnterOffset(
+      target.slide === 'forward'
+        ? measured.pageWidth + measured.gap
+        : target.slide === 'backward'
+          ? -(measured.pageWidth + measured.gap)
+          : 0,
+    )
     setPage(Math.min(Math.max(0, next), total - 1))
   }, [])
 
@@ -161,10 +176,13 @@ export function ChapterView({
     [pages, onPastEnd, onPastStart],
   )
 
-  // 版面定位完成後才把動畫打開，讓下一次翻頁滑得順
+  // 先畫出入場位置，下一幀才打開動畫並滑到定位
   useEffect(() => {
     if (animate) return
-    const frame = requestAnimationFrame(() => setAnimate(true))
+    const frame = requestAnimationFrame(() => {
+      setAnimate(true)
+      setEnterOffset(0)
+    })
     return () => cancelAnimationFrame(frame)
   }, [animate])
 
@@ -273,7 +291,7 @@ export function ChapterView({
         ref={contentRef}
         lang="zh-TW"
         data-animate={animate}
-        style={{ transform: `translateX(${-translateForPage(page, layout)}px)` }}
+        style={{ transform: `translateX(${enterOffset - translateForPage(page, layout)}px)` }}
       />
     </div>
   )
