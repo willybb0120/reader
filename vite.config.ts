@@ -25,6 +25,8 @@ function booksManifest(): Plugin {
 }
 
 export default defineConfig({
+  // 部署在 GitHub Pages 專案頁（/reader/）底下，本機開發維持根路徑
+  base: process.env.GITHUB_ACTIONS ? '/reader/' : '/',
   plugins: [react(), booksManifest()],
   server: {
     // 專案放在 /mnt/c 時，WSL2 跨檔案系統收不到 inotify 事件，必須輪詢才會熱更新
