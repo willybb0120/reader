@@ -380,6 +380,36 @@ try {
     fail(`滾動模式重新載入後位置差太多：${scrollBefore.top} → ${scrollAfter.top}`)
   await page.screenshot({ path: `${outDir}/21-scroll-restored.png` })
 
+  // 章尾銜接：捲到底之後再滑一次才換章
+  const scrollTitle = () => page.textContent('.topbar__title')
+  const beforeCross = await scrollTitle()
+  await page.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    pager.scrollTop = pager.scrollHeight
+  })
+  await page.waitForTimeout(900)
+  if ((await scrollTitle()) !== beforeCross) fail('滾動到底就直接換章了，應該要再滑一次')
+
+  await page.mouse.move(400, 600)
+  await page.mouse.wheel(0, 200)
+  await page.waitForTimeout(900)
+  const afterCross = await scrollTitle()
+  if (afterCross === beforeCross) fail('滾動到底再滑一次沒有換到下一章')
+  const enteredTop = await page.evaluate(() => document.querySelector('.pager--scroll').scrollTop)
+  if (enteredTop > 4) fail(`換章後沒有回到章首：scrollTop ${enteredTop}`)
+  await page.screenshot({ path: `${outDir}/22-scroll-next-chapter.png` })
+
+  // 章首銜接：在頂端往上滑回到上一章的章尾
+  await page.waitForTimeout(700)
+  await page.mouse.wheel(0, -200)
+  await page.waitForTimeout(900)
+  if ((await scrollTitle()) !== beforeCross) fail('在章首往上滑沒有回到上一章')
+  const backTop = await page.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    return pager.scrollHeight - pager.clientHeight - pager.scrollTop
+  })
+  if (backTop > 8) fail(`往回換章沒有停在上一章章尾：距底 ${backTop}px`)
+
   // 回到書櫃
   await page.click('[aria-label="回到書櫃"]')
   await page.waitForSelector('.library__grid')

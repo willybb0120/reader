@@ -3,7 +3,10 @@ import type { ChapterViewProps, Entry } from './chapterTypes'
 import { useChapterContent } from './useChapterContent'
 import { charOffsetAtScrollTop, scrollTopForCharOffset, scrollTopForElement } from './pageMetrics'
 import { plainText } from './textRange'
-import { clampScrollTop } from './scroll'
+import { atEnd, atStart, clampScrollTop } from './scroll'
+
+/** 換章後的冷卻時間，避免慣性滾動一路翻過好幾章 */
+const EDGE_COOLDOWN_MS = 600
 
 export function ScrollChapter({
   chapter,
@@ -23,6 +26,8 @@ export function ScrollChapter({
 }: ChapterViewProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  /** 上次換章的時間，用來擋住慣性滾動連續觸發 */
+  const crossedAtRef = useRef(0)
 
   useChapterContent({
     contentRef,
@@ -59,6 +64,7 @@ export function ScrollChapter({
       top = element ? scrollTopForElement(content, element) : 0
     }
     viewport.scrollTop = clampScrollTop(top, viewport.clientHeight, viewport.scrollHeight)
+    crossedAtRef.current = Date.now()
   }, [])
 
   useLayoutEffect(() => {
@@ -88,10 +94,48 @@ export function ScrollChapter({
     }
   }, [chapter.index, layoutKey, onPositionChange])
 
-  // 章尾銜接在 Task 6 接上，PagerApi 在 Task 7 接上
+  // 已經到底（或到頂）之後，再往同方向滑一次才換章
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+
+    const cross = (forward: boolean) => {
+      const now = Date.now()
+      if (now - crossedAtRef.current < EDGE_COOLDOWN_MS) return
+      const { scrollTop, clientHeight, scrollHeight } = viewport
+      if (forward ? !atEnd(scrollTop, clientHeight, scrollHeight) : !atStart(scrollTop)) return
+      crossedAtRef.current = now
+      if (forward) onPastEnd()
+      else onPastStart()
+    }
+
+    const onWheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaY) < 4) return
+      cross(event.deltaY > 0)
+    }
+
+    let startY = 0
+    const onTouchStart = (event: TouchEvent) => {
+      startY = event.touches[0].clientY
+    }
+    const onTouchMove = (event: TouchEvent) => {
+      const dy = event.touches[0].clientY - startY
+      if (Math.abs(dy) < 60) return
+      cross(dy < 0)
+    }
+
+    viewport.addEventListener('wheel', onWheel, { passive: true })
+    viewport.addEventListener('touchstart', onTouchStart, { passive: true })
+    viewport.addEventListener('touchmove', onTouchMove, { passive: true })
+    return () => {
+      viewport.removeEventListener('wheel', onWheel)
+      viewport.removeEventListener('touchstart', onTouchStart)
+      viewport.removeEventListener('touchmove', onTouchMove)
+    }
+  }, [onPastEnd, onPastStart])
+
+  // PagerApi 在 Task 7 接上
   void pagerRef
-  void onPastEnd
-  void onPastStart
   void onUserTurn
 
   return (
