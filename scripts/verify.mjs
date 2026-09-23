@@ -463,8 +463,61 @@ try {
     .catch(() => false)
   if (!speakingVisible) fail('滾動模式下正在朗讀的句子沒有留在畫面上')
   await page.screenshot({ path: `${outDir}/23-scroll-narration.png` })
+
+  // 守住程式捲動旗標：連續念好幾句時，正在念的句子在內容裡的絕對位置只能前進，
+  // 不能倒退。旗標壞掉時朗讀跟隨的每一次 seek 都會被誤判成使用者跳讀，
+  // 反覆把畫面拉回視窗頂端那一句，絕對位置就會忽大忽小。
+  // 章節念完會自動跳到下一章，位置本來就會重新從頭起算，跨章不列入比較。
+  const speakingSamples = []
+  for (let i = 0; i < 10; i++) {
+    const sample = await page.evaluate(() => {
+      const mark = document.querySelector('.chapter mark[data-speaking]')
+      const pager = document.querySelector('.pager--scroll')
+      if (!mark || !pager) return null
+      return {
+        title: document.querySelector('.topbar__title')?.textContent ?? '',
+        position: pager.scrollTop + mark.getBoundingClientRect().top,
+      }
+    })
+    if (sample !== null) speakingSamples.push(sample)
+    await page.waitForTimeout(220)
+  }
+  if (speakingSamples.length < 3)
+    fail(`朗讀樣本太少，無法驗證旗標：${speakingSamples.length}`)
+  for (let i = 1; i < speakingSamples.length; i++) {
+    if (speakingSamples[i].title !== speakingSamples[i - 1].title) continue
+    if (speakingSamples[i].position < speakingSamples[i - 1].position - 4)
+      fail(
+        `朗讀位置退回頂端，程式捲動旗標可能沒有正確歸位：${speakingSamples.map((s) => s.position).join(' → ')}`,
+      )
+  }
+
   await page.click('[aria-label="暫停朗讀"]')
   await page.waitForTimeout(300)
+
+  // 守住 Critical 1（切換分頁／滾動時的位置還原）：換到另一個內容夠長的章節。
+  // 主線測試一路用的目錄第 3 項內容偏短（只比一屏多一點），捲到底也未必能跨過
+  // 分頁版面的第一頁邊界，驗不出這個 bug；這裡改用第 1 項，確保有足夠篇幅可以捲。
+  await page.click('[aria-label="開啟目錄"]')
+  await page.waitForSelector('.drawer')
+  await page.waitForTimeout(400)
+  await (await page.$$('.toc__item'))[1].click()
+  await page.waitForSelector('.pager--scroll')
+  await page.waitForTimeout(600)
+
+  const midBox = await page.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    return { scrollHeight: pager.scrollHeight, clientHeight: pager.clientHeight }
+  })
+  if (midBox.scrollHeight <= midBox.clientHeight * 3)
+    fail(`章節內容不夠長，測不出捲到中段的效果：${midBox.scrollHeight} / ${midBox.clientHeight}`)
+  await page.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    pager.scrollTo({ top: (pager.scrollHeight - pager.clientHeight) / 2 })
+  })
+  await page.waitForTimeout(900)
+  const midScrollTop = await page.evaluate(() => document.querySelector('.pager--scroll').scrollTop)
+  if (midScrollTop < 50) fail(`捲到中段失敗，scrollTop 只有 ${midScrollTop}`)
 
   // 切回分頁模式，分頁行為仍然正常
   await page.click('[aria-label="閱讀設定"]')
@@ -475,6 +528,8 @@ try {
   if (await page.$('.pager--scroll')) fail('關掉直式滾動後仍是滾動版面')
   const backToPaged = await readState(page)
   if (backToPaged.pages < 2) fail(`切回分頁後沒有重新分頁：總頁數 ${backToPaged.pages}`)
+  if (backToPaged.page === 0)
+    fail('切回分頁後頁碼是 0，捲動中段的位置沒有帶回去（Critical 1：切換版面時位置還原失效）')
 
   // 回到書櫃
   await page.click('[aria-label="回到書櫃"]')
