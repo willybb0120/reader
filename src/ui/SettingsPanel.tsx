@@ -148,6 +148,15 @@ export function SettingsPanel({
             />
           </label>
 
+          <label className="setting setting--row">
+            <span className="setting__label">直式滾動</span>
+            <input
+              type="checkbox"
+              checked={settings.scroll}
+              onChange={(event) => onChange({ scroll: event.target.checked })}
+            />
+          </label>
+
           <button className="settings__link" onClick={onShowShortcuts}>
             鍵盤快捷鍵…
           </button>
