@@ -53,6 +53,25 @@ export function App() {
   const [helpOpen, setHelpOpen] = useState(false)
   const pagerRef = useRef<PagerApi | null>(null)
 
+  /** 最後回報的字元位移，切換版面模式時用來留在原處 */
+  const positionRef = useRef(0)
+  const modeRef = useRef(settings.scroll)
+
+  const onPositionChange = useCallback(
+    (charOffset: number, length: number) => {
+      positionRef.current = charOffset
+      reportPosition(charOffset, length)
+    },
+    [reportPosition],
+  )
+
+  // 切換分頁／滾動會換掉整個版面元件，要主動回到原本讀到的位置
+  useEffect(() => {
+    if (modeRef.current === settings.scroll) return
+    modeRef.current = settings.scroll
+    if (chapter) void goToChapter(chapter.index, { kind: 'offset', offset: positionRef.current })
+  }, [settings.scroll, chapter, goToChapter])
+
   const chapterAnnotations = useMemo(
     () => (chapter ? (byChapter.get(chapter.index) ?? []) : []),
     [byChapter, chapter],
@@ -336,7 +355,7 @@ export function App() {
             onPastEnd={onPastEnd}
             onPastStart={onPastStart}
             speakingRange={narration.sentence}
-            onPositionChange={reportPosition}
+            onPositionChange={onPositionChange}
             onUserTurn={narration.playing ? narration.seekToOffset : undefined}
           />
           <PlayerBar

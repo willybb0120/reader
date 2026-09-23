@@ -339,6 +339,47 @@ try {
   await page.waitForTimeout(350)
   if ((await readState(page)).page === beforeKey.page) fail('方向鍵沒有翻頁')
 
+  // 直式滾動：切換模式後內容改為垂直捲動
+  await page.click('[aria-label="閱讀設定"]')
+  await page.waitForSelector('.drawer--right')
+  await page.click('.setting--row:has-text("直式滾動") input')
+  await page.keyboard.press('Escape')
+  await page.waitForSelector('.pager--scroll', { timeout: 5000 })
+  await page.waitForTimeout(600)
+
+  const scrollBox = await page.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    return { scrollHeight: pager.scrollHeight, clientHeight: pager.clientHeight }
+  })
+  if (scrollBox.scrollHeight <= scrollBox.clientHeight)
+    fail(`滾動模式的內容沒有超出視窗：${scrollBox.scrollHeight} / ${scrollBox.clientHeight}`)
+
+  const pageStillFixed = await page.evaluate(
+    () => document.documentElement.scrollHeight - document.documentElement.clientHeight,
+  )
+  if (pageStillFixed > 0) fail(`滾動模式下整頁也跟著捲動 ${pageStillFixed}px`)
+  await page.screenshot({ path: `${outDir}/20-scroll.png` })
+
+  // 捲到中段後重新載入，應回到大致相同的位置
+  await page.evaluate(() => document.querySelector('.pager--scroll').scrollTo({ top: 1200 }))
+  await page.waitForTimeout(1200)
+  const scrollBefore = await page.evaluate(() => ({
+    top: document.querySelector('.pager--scroll').scrollTop,
+    title: document.querySelector('.topbar__title').textContent,
+  }))
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.pager--scroll')
+  await page.waitForTimeout(1200)
+  const scrollAfter = await page.evaluate(() => ({
+    top: document.querySelector('.pager--scroll').scrollTop,
+    title: document.querySelector('.topbar__title').textContent,
+  }))
+  if (scrollAfter.title !== scrollBefore.title)
+    fail(`滾動模式重新載入後章節不同：${scrollBefore.title} → ${scrollAfter.title}`)
+  if (Math.abs(scrollAfter.top - scrollBefore.top) > 80)
+    fail(`滾動模式重新載入後位置差太多：${scrollBefore.top} → ${scrollAfter.top}`)
+  await page.screenshot({ path: `${outDir}/21-scroll-restored.png` })
+
   // 回到書櫃
   await page.click('[aria-label="回到書櫃"]')
   await page.waitForSelector('.library__grid')

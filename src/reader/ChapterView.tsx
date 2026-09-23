@@ -1,10 +1,8 @@
 import type { ChapterViewProps } from './chapterTypes'
 import { PagedChapter } from './PagedChapter'
+import { ScrollChapter } from './ScrollChapter'
 
 /** 依設定選擇版面：橫向分頁或直式滾動。 */
-export function ChapterView(props: ChapterViewProps & { scroll: boolean }) {
-  const { scroll, ...rest } = props
-  // ScrollChapter 在 Task 5 接上，先一律走分頁
-  void scroll
-  return <PagedChapter {...rest} />
+export function ChapterView({ scroll, ...props }: ChapterViewProps & { scroll: boolean }) {
+  return scroll ? <ScrollChapter {...props} /> : <PagedChapter {...props} />
 }

@@ -70,3 +70,40 @@ export function applyLayout(
   content.style.columnWidth = `${layout.pageWidth}px`
   content.style.columnGap = `${layout.gap}px`
 }
+
+/** 某個字元位移相對內容頂端的垂直位置。 */
+function offsetTop(content: HTMLElement, charOffset: number): number | null {
+  const range = createRange(content, charOffset, charOffset + 1)
+  if (!range) return null
+  const rect = range.getBoundingClientRect()
+  if (rect.width === 0 && rect.height === 0) return null
+  return rect.top - content.getBoundingClientRect().top
+}
+
+/** 要讓某個字元位移出現在視窗頂端，該捲到的 scrollTop。 */
+export function scrollTopForCharOffset(content: HTMLElement, charOffset: number): number {
+  return offsetTop(content, charOffset) ?? 0
+}
+
+/** 要讓某個元素出現在視窗頂端，該捲到的 scrollTop。 */
+export function scrollTopForElement(content: HTMLElement, element: Element): number {
+  return element.getBoundingClientRect().top - content.getBoundingClientRect().top
+}
+
+/**
+ * 視窗頂端那個字的字元位移。
+ * 文字在單欄版面裡垂直位置單調遞增，所以可以二分搜尋，與 charOffsetAtPage 同理。
+ */
+export function charOffsetAtScrollTop(content: HTMLElement, scrollTop: number): number {
+  if (scrollTop <= 0) return 0
+  const length = plainText(content).length
+  let low = 0
+  let high = Math.max(0, length - 1)
+
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if ((offsetTop(content, middle) ?? 0) < scrollTop) low = middle + 1
+    else high = middle
+  }
+  return low
+}
