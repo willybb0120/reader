@@ -3,6 +3,7 @@ import type { ChapterViewProps, Entry } from './chapterTypes'
 import { useChapterContent } from './useChapterContent'
 import { charOffsetAtScrollTop, scrollTopForCharOffset, scrollTopForElement } from './pageMetrics'
 import { plainText } from './textRange'
+import { createProgrammaticScrollGuard } from './scrollGuard'
 import { atEnd, atStart, clampScrollTop, revealScrollTop, turnScrollTop } from './scroll'
 
 /** 換章後的冷卻時間，避免慣性滾動一路翻過好幾章 */
@@ -11,8 +12,12 @@ const EDGE_COOLDOWN_MS = 600
 const WHEEL_THRESHOLD = 4
 /** 觸控要滑動這麼多像素才算一次明確的換章意圖 */
 const TOUCH_THRESHOLD = 60
-/** 沒有 scrollend 事件的瀏覽器上，程式捲動最多被視為進行中這麼久 */
-const PROGRAMMATIC_SCROLL_TIMEOUT_MS = 1200
+/**
+ * 捲動停止多久才算「安定」，沒有 scrollend 事件的瀏覽器用這個逾時後備。
+ * App 存檔本來就節流到 800ms，這裡不需要更即時；同時也是回報位置／朗讀 seek 的收斂點，
+ * 太短會讓慣性滾動中間也觸發，太長會讓進度看起來卡頓。
+ */
+const SCROLL_IDLE_MS = 200
 
 export function ScrollChapter({
   chapter,
@@ -38,9 +43,19 @@ export function ScrollChapter({
   const startYRef = useRef(0)
   /** 這次觸碰是否已經換過章，避免一次連續觸碰換兩章 */
   const touchCrossedRef = useRef(false)
-  /** 程式捲動（翻頁／朗讀跟隨）進行中，捲動事件不該被當成使用者跳讀 */
-  const programmaticRef = useRef(false)
-  const programmaticTimerRef = useRef(0)
+  /** 章節純文字長度；只在內容真的變動時整棵樹算一次，捲動收斂回報時直接複用 */
+  const chapterLengthRef = useRef(0)
+
+  /**
+   * 程式捲動（翻頁／朗讀跟隨／重排）進行中的旗標，抽成獨立工廠方便單元測試。
+   * 用 lazy ref 只建立一次，讓它的生命週期跟著元件本身，不受其他 effect 的
+   * 依賴陣列變動（例如 onUserTurn 隨朗讀播放／暫停改變）影響而被重建或重置。
+   */
+  const guardRef = useRef<ReturnType<typeof createProgrammaticScrollGuard> | null>(null)
+  if (!guardRef.current) guardRef.current = createProgrammaticScrollGuard()
+  const guard = guardRef.current
+
+  useEffect(() => () => guard.dispose(), [guard])
 
   useChapterContent({
     contentRef,
@@ -58,12 +73,6 @@ export function ScrollChapter({
     const viewport = viewportRef.current
     const content = contentRef.current
     if (!viewport || !content) return
-
-    // 分頁模式會把欄寬寫成行內樣式，切到滾動模式必須清掉
-    content.style.height = ''
-    content.style.width = ''
-    content.style.columnWidth = ''
-    content.style.columnGap = ''
 
     let top = 0
     if (target.kind === 'last') top = viewport.scrollHeight
@@ -84,28 +93,40 @@ export function ScrollChapter({
     settle(entry)
   }, [chapter.html, annotations, highlightRange, entry, layoutKey, settle])
 
-  // 回報目前位置供進度記錄。滾動事件很密集，用 rAF 收斂成每幀一次。
+  // 章節文字實際變動才重新量測長度，不要每次捲動都重算
+  useLayoutEffect(() => {
+    const content = contentRef.current
+    chapterLengthRef.current = content ? plainText(content).length : 0
+  }, [chapter.html, annotations, highlightRange])
+
+  // 回報位置與朗讀 seek 的單一收斂點：捲動停止（scrollend，或沒有該事件時 SCROLL_IDLE_MS 靜止）
+  // 才做一次，而不是每幀都做。逐幀 seek 會讓 speechSynthesis 被連續 cancel/speak，容易掉句或卡死；
+  // 逐幀量測也要整章重走一遍文字節點，手機上會掉幀。
   useEffect(() => {
     const viewport = viewportRef.current
     const content = contentRef.current
     if (!viewport || !content) return
 
-    let frame = 0
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+
     const report = () => {
-      frame = 0
+      idleTimer = undefined
       const offset = charOffsetAtScrollTop(content, viewport.scrollTop)
-      onPositionChange(offset, plainText(content).length)
-      if (programmaticRef.current) return
+      onPositionChange(offset, chapterLengthRef.current)
+      if (guard.active) return
       if (onUserTurn) onUserTurn(offset)
     }
     const onScroll = () => {
-      if (!frame) frame = requestAnimationFrame(report)
+      clearTimeout(idleTimer)
+      idleTimer = setTimeout(report, SCROLL_IDLE_MS)
     }
-    // scrollend 在最後一次 scroll 事件之後才發，所以動畫最後一幀的 report()
-    // 仍會在旗標為 true 的狀態下跑，不會誤觸 onUserTurn
+    // scrollend 在最後一次 scroll 事件之後才發，所以要先用當下的旗標值 report()，
+    // 不會誤觸 onUserTurn，再把旗標解除，留給下一次真正的使用者捲動用
     const onScrollEnd = () => {
-      window.clearTimeout(programmaticTimerRef.current)
-      programmaticRef.current = false
+      clearTimeout(idleTimer)
+      idleTimer = undefined
+      report()
+      guard.onScrollEnd()
     }
 
     report()
@@ -114,10 +135,24 @@ export function ScrollChapter({
     return () => {
       viewport.removeEventListener('scroll', onScroll)
       viewport.removeEventListener('scrollend', onScrollEnd)
-      window.clearTimeout(programmaticTimerRef.current)
-      if (frame) cancelAnimationFrame(frame)
+      clearTimeout(idleTimer)
     }
-  }, [chapter.index, layoutKey, onPositionChange, onUserTurn])
+  }, [chapter.index, layoutKey, onPositionChange, onUserTurn, guard])
+
+  // 視窗大小改變時（例如手機轉向）用目前讀到的字元位移重新定位，避免重排後 scrollTop 指向別的文字
+  useEffect(() => {
+    const viewport = viewportRef.current
+    const content = contentRef.current
+    if (!viewport || !content) return
+
+    const observer = new ResizeObserver(() => {
+      const offset = charOffsetAtScrollTop(content, viewport.scrollTop)
+      guard.begin()
+      settle({ kind: 'offset', offset })
+    })
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [settle, guard])
 
   // 已經到底（或到頂）之後，再往同方向滑一次才換章
   useEffect(() => {
@@ -167,15 +202,6 @@ export function ScrollChapter({
     }
   }, [onPastEnd, onPastStart])
 
-  /** 標記接下來的捲動是程式造成的。正常由 scrollend 收尾，沒有該事件的瀏覽器才靠逾時。 */
-  const beginProgrammaticScroll = useCallback(() => {
-    programmaticRef.current = true
-    window.clearTimeout(programmaticTimerRef.current)
-    programmaticTimerRef.current = window.setTimeout(() => {
-      programmaticRef.current = false
-    }, PROGRAMMATIC_SCROLL_TIMEOUT_MS)
-  }, [])
-
   /**
    * 執行一次程式捲動。目標與現在相同就什麼都不做：
    * 零位移的 scrollTo 不會發出 scroll 或 scrollend，旗標會一直卡著沒人清。
@@ -183,10 +209,10 @@ export function ScrollChapter({
   const scrollProgrammatically = useCallback(
     (viewport: HTMLElement, top: number) => {
       if (Math.abs(top - viewport.scrollTop) < 1) return
-      beginProgrammaticScroll()
+      guard.begin()
       viewport.scrollTo({ top, behavior: 'smooth' })
     },
-    [beginProgrammaticScroll],
+    [guard],
   )
 
   const turn = useCallback(
