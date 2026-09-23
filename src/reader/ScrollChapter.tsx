@@ -7,6 +7,10 @@ import { atEnd, atStart, clampScrollTop } from './scroll'
 
 /** 換章後的冷卻時間，避免慣性滾動一路翻過好幾章 */
 const EDGE_COOLDOWN_MS = 600
+/** 小於這個滾輪位移視為雜訊，不當成換章意圖 */
+const WHEEL_THRESHOLD = 4
+/** 觸控要滑動這麼多像素才算一次明確的換章意圖 */
+const TOUCH_THRESHOLD = 60
 
 export function ScrollChapter({
   chapter,
@@ -28,6 +32,10 @@ export function ScrollChapter({
   const contentRef = useRef<HTMLDivElement>(null)
   /** 上次換章的時間，用來擋住慣性滾動連續觸發 */
   const crossedAtRef = useRef(0)
+  /** 觸控起點的 Y 座標，effect 重新註冊（換章時 callback 變了）也不能被重設 */
+  const startYRef = useRef(0)
+  /** 這次觸碰是否已經換過章，避免一次連續觸碰換兩章 */
+  const touchCrossedRef = useRef(false)
 
   useChapterContent({
     contentRef,
@@ -99,29 +107,37 @@ export function ScrollChapter({
     const viewport = viewportRef.current
     if (!viewport) return
 
-    const cross = (forward: boolean) => {
-      const now = Date.now()
-      if (now - crossedAtRef.current < EDGE_COOLDOWN_MS) return
+    /** 觸發了換章就回傳 true，讓呼叫端知道這次手勢已經用掉了 */
+    const cross = (forward: boolean): boolean => {
       const { scrollTop, clientHeight, scrollHeight } = viewport
-      if (forward ? !atEnd(scrollTop, clientHeight, scrollHeight) : !atStart(scrollTop)) return
+      if (forward ? !atEnd(scrollTop, clientHeight, scrollHeight) : !atStart(scrollTop)) return false
+
+      const now = Date.now()
+      if (now - crossedAtRef.current < EDGE_COOLDOWN_MS) {
+        // 還在冷卻中卻仍收到邊界事件，代表慣性還沒停：把冷卻順延，要真的停下來才換下一章
+        crossedAtRef.current = now
+        return false
+      }
       crossedAtRef.current = now
       if (forward) onPastEnd()
       else onPastStart()
+      return true
     }
 
     const onWheel = (event: WheelEvent) => {
-      if (Math.abs(event.deltaY) < 4) return
+      if (Math.abs(event.deltaY) < WHEEL_THRESHOLD) return
       cross(event.deltaY > 0)
     }
 
-    let startY = 0
     const onTouchStart = (event: TouchEvent) => {
-      startY = event.touches[0].clientY
+      startYRef.current = event.touches[0].clientY
+      touchCrossedRef.current = false
     }
     const onTouchMove = (event: TouchEvent) => {
-      const dy = event.touches[0].clientY - startY
-      if (Math.abs(dy) < 60) return
-      cross(dy < 0)
+      if (touchCrossedRef.current) return
+      const dy = event.touches[0].clientY - startYRef.current
+      if (Math.abs(dy) < TOUCH_THRESHOLD) return
+      if (cross(dy < 0)) touchCrossedRef.current = true
     }
 
     viewport.addEventListener('wheel', onWheel, { passive: true })

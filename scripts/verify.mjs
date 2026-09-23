@@ -410,6 +410,21 @@ try {
   })
   if (backTop > 8) fail(`往回換章沒有停在上一章章尾：距底 ${backTop}px`)
 
+  // 冷卻期間的連續事件不該連跳：剛換到下一章、還在冷卻窗內時連續收到邊界事件，
+  // 冷卻要跟著順延，不能只看「距離第一次換章多久」，否則累計超過 600ms 就會又換一次
+  await page.waitForTimeout(700)
+  await page.mouse.wheel(0, 200)
+  await page.waitForTimeout(200)
+  const afterCooldownCross = await scrollTitle()
+  await page.mouse.wheel(0, -200)
+  await page.waitForTimeout(220)
+  await page.mouse.wheel(0, -200)
+  await page.waitForTimeout(220)
+  await page.mouse.wheel(0, -200)
+  await page.waitForTimeout(250)
+  if ((await scrollTitle()) !== afterCooldownCross)
+    fail('冷卻期間的連續滾輪事件又換了一次章')
+
   // 回到書櫃
   await page.click('[aria-label="回到書櫃"]')
   await page.waitForSelector('.library__grid')
