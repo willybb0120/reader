@@ -323,6 +323,7 @@ export function App() {
       {reading && (
         <main className="reader">
           <ChapterView
+            scroll={settings.scroll}
             chapter={chapter}
             annotations={chapterAnnotations}
             entry={entry}
