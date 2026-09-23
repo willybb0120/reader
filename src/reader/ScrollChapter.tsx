@@ -3,7 +3,7 @@ import type { ChapterViewProps, Entry } from './chapterTypes'
 import { useChapterContent } from './useChapterContent'
 import { charOffsetAtScrollTop, scrollTopForCharOffset, scrollTopForElement } from './pageMetrics'
 import { plainText } from './textRange'
-import { atEnd, atStart, clampScrollTop } from './scroll'
+import { atEnd, atStart, clampScrollTop, revealScrollTop, turnScrollTop } from './scroll'
 
 /** 換章後的冷卻時間，避免慣性滾動一路翻過好幾章 */
 const EDGE_COOLDOWN_MS = 600
@@ -11,6 +11,8 @@ const EDGE_COOLDOWN_MS = 600
 const WHEEL_THRESHOLD = 4
 /** 觸控要滑動這麼多像素才算一次明確的換章意圖 */
 const TOUCH_THRESHOLD = 60
+/** 平滑捲動的動畫時間上限，這段期間內的捲動事件都算程式造成的 */
+const SMOOTH_SETTLE_MS = 400
 
 export function ScrollChapter({
   chapter,
@@ -36,6 +38,8 @@ export function ScrollChapter({
   const startYRef = useRef(0)
   /** 這次觸碰是否已經換過章，避免一次連續觸碰換兩章 */
   const touchCrossedRef = useRef(false)
+  /** 程式捲動（翻頁／朗讀跟隨）的平滑動畫期間，捲動事件不該被當成使用者跳讀 */
+  const programmaticUntilRef = useRef(0)
 
   useChapterContent({
     contentRef,
@@ -88,7 +92,10 @@ export function ScrollChapter({
     let frame = 0
     const report = () => {
       frame = 0
-      onPositionChange(charOffsetAtScrollTop(content, viewport.scrollTop), plainText(content).length)
+      const offset = charOffsetAtScrollTop(content, viewport.scrollTop)
+      onPositionChange(offset, plainText(content).length)
+      if (Date.now() < programmaticUntilRef.current) return
+      if (onUserTurn) onUserTurn(offset)
     }
     const onScroll = () => {
       if (!frame) frame = requestAnimationFrame(report)
@@ -100,7 +107,7 @@ export function ScrollChapter({
       viewport.removeEventListener('scroll', onScroll)
       if (frame) cancelAnimationFrame(frame)
     }
-  }, [chapter.index, layoutKey, onPositionChange])
+  }, [chapter.index, layoutKey, onPositionChange, onUserTurn])
 
   // 已經到底（或到頂）之後，再往同方向滑一次才換章
   useEffect(() => {
@@ -150,9 +157,51 @@ export function ScrollChapter({
     }
   }, [onPastEnd, onPastStart])
 
-  // PagerApi 在 Task 7 接上
-  void pagerRef
-  void onUserTurn
+  const turn = useCallback(
+    (delta: number) => {
+      const viewport = viewportRef.current
+      const content = contentRef.current
+      if (!viewport || !content) return
+      const { scrollTop, clientHeight, scrollHeight } = viewport
+
+      if (delta > 0 && atEnd(scrollTop, clientHeight, scrollHeight)) {
+        onPastEnd()
+        return
+      }
+      if (delta < 0 && atStart(scrollTop)) {
+        onPastStart()
+        return
+      }
+
+      const top = turnScrollTop(scrollTop, clientHeight, scrollHeight, delta)
+      programmaticUntilRef.current = Date.now() + SMOOTH_SETTLE_MS
+      viewport.scrollTo({ top, behavior: 'smooth' })
+      if (onUserTurn) onUserTurn(charOffsetAtScrollTop(content, top))
+    },
+    [onPastEnd, onPastStart, onUserTurn],
+  )
+
+  const reveal = useCallback((offset: number) => {
+    const viewport = viewportRef.current
+    const content = contentRef.current
+    if (!viewport || !content) return
+    const top = revealScrollTop(
+      scrollTopForCharOffset(content, offset),
+      viewport.scrollTop,
+      viewport.clientHeight,
+      viewport.scrollHeight,
+    )
+    if (top === null) return
+    programmaticUntilRef.current = Date.now() + SMOOTH_SETTLE_MS
+    viewport.scrollTo({ top, behavior: 'smooth' })
+  }, [])
+
+  useEffect(() => {
+    pagerRef.current = { turn, reveal }
+    return () => {
+      pagerRef.current = null
+    }
+  }, [pagerRef, turn, reveal])
 
   return (
     <div className="pager pager--scroll" ref={viewportRef}>

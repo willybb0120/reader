@@ -425,6 +425,57 @@ try {
   if ((await scrollTitle()) !== afterCooldownCross)
     fail('冷卻期間的連續滾輪事件又換了一次章')
 
+  // 方向鍵在滾動模式要捲一屏。前面的換章測試可能剛好停在一屏內就放得下的短章節，
+  // 那樣的章節本來就沒有捲動空間、按方向鍵會直接換到下一章（符合到底換章的規格），
+  // 所以先確保目前章節捲得動，再量測這次按鍵是否真的往下捲。
+  for (let guard = 0; guard < 4; guard++) {
+    const box = await page.evaluate(() => {
+      const pager = document.querySelector('.pager--scroll')
+      return { scrollHeight: pager.scrollHeight, clientHeight: pager.clientHeight }
+    })
+    if (box.scrollHeight > box.clientHeight + 4) break
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(700)
+  }
+  const keyBefore = await page.evaluate(() => document.querySelector('.pager--scroll').scrollTop)
+  await page.keyboard.press('ArrowRight')
+  await page.waitForTimeout(700)
+  const keyAfter = await page.evaluate(() => document.querySelector('.pager--scroll').scrollTop)
+  if (keyAfter <= keyBefore) fail(`滾動模式方向鍵沒有往下捲：${keyBefore} → ${keyAfter}`)
+
+  // 朗讀時正在念的句子要留在畫面上
+  await page.click('[aria-label="開始朗讀"]')
+  await page.waitForSelector('.chapter mark[data-speaking]', { timeout: 5000 })
+  const speakingVisible = await page
+    .waitForFunction(
+      () => {
+        const mark = document.querySelector('.chapter mark[data-speaking]')
+        const pager = document.querySelector('.pager--scroll')
+        if (!mark || !pager) return false
+        const rect = mark.getClientRects()[0]
+        const bounds = pager.getBoundingClientRect()
+        return !!rect && rect.top >= bounds.top - 4 && rect.bottom <= bounds.bottom + 4
+      },
+      null,
+      { timeout: 8000 },
+    )
+    .then(() => true)
+    .catch(() => false)
+  if (!speakingVisible) fail('滾動模式下正在朗讀的句子沒有留在畫面上')
+  await page.screenshot({ path: `${outDir}/23-scroll-narration.png` })
+  await page.click('[aria-label="暫停朗讀"]')
+  await page.waitForTimeout(300)
+
+  // 切回分頁模式，分頁行為仍然正常
+  await page.click('[aria-label="閱讀設定"]')
+  await page.waitForSelector('.drawer--right')
+  await page.click('.setting--row:has-text("直式滾動") input')
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(700)
+  if (await page.$('.pager--scroll')) fail('關掉直式滾動後仍是滾動版面')
+  const backToPaged = await readState(page)
+  if (backToPaged.pages < 2) fail(`切回分頁後沒有重新分頁：總頁數 ${backToPaged.pages}`)
+
   // 回到書櫃
   await page.click('[aria-label="回到書櫃"]')
   await page.waitForSelector('.library__grid')
