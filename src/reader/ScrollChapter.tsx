@@ -11,8 +11,8 @@ const EDGE_COOLDOWN_MS = 600
 const WHEEL_THRESHOLD = 4
 /** 觸控要滑動這麼多像素才算一次明確的換章意圖 */
 const TOUCH_THRESHOLD = 60
-/** 平滑捲動的動畫時間上限，這段期間內的捲動事件都算程式造成的 */
-const SMOOTH_SETTLE_MS = 400
+/** 沒有 scrollend 事件的瀏覽器上，程式捲動最多被視為進行中這麼久 */
+const PROGRAMMATIC_SCROLL_TIMEOUT_MS = 1200
 
 export function ScrollChapter({
   chapter,
@@ -38,8 +38,9 @@ export function ScrollChapter({
   const startYRef = useRef(0)
   /** 這次觸碰是否已經換過章，避免一次連續觸碰換兩章 */
   const touchCrossedRef = useRef(false)
-  /** 程式捲動（翻頁／朗讀跟隨）的平滑動畫期間，捲動事件不該被當成使用者跳讀 */
-  const programmaticUntilRef = useRef(0)
+  /** 程式捲動（翻頁／朗讀跟隨）進行中，捲動事件不該被當成使用者跳讀 */
+  const programmaticRef = useRef(false)
+  const programmaticTimerRef = useRef(0)
 
   useChapterContent({
     contentRef,
@@ -94,17 +95,26 @@ export function ScrollChapter({
       frame = 0
       const offset = charOffsetAtScrollTop(content, viewport.scrollTop)
       onPositionChange(offset, plainText(content).length)
-      if (Date.now() < programmaticUntilRef.current) return
+      if (programmaticRef.current) return
       if (onUserTurn) onUserTurn(offset)
     }
     const onScroll = () => {
       if (!frame) frame = requestAnimationFrame(report)
     }
+    // scrollend 在最後一次 scroll 事件之後才發，所以動畫最後一幀的 report()
+    // 仍會在旗標為 true 的狀態下跑，不會誤觸 onUserTurn
+    const onScrollEnd = () => {
+      window.clearTimeout(programmaticTimerRef.current)
+      programmaticRef.current = false
+    }
 
     report()
     viewport.addEventListener('scroll', onScroll, { passive: true })
+    viewport.addEventListener('scrollend', onScrollEnd)
     return () => {
       viewport.removeEventListener('scroll', onScroll)
+      viewport.removeEventListener('scrollend', onScrollEnd)
+      window.clearTimeout(programmaticTimerRef.current)
       if (frame) cancelAnimationFrame(frame)
     }
   }, [chapter.index, layoutKey, onPositionChange, onUserTurn])
@@ -157,6 +167,15 @@ export function ScrollChapter({
     }
   }, [onPastEnd, onPastStart])
 
+  /** 標記接下來的捲動是程式造成的。正常由 scrollend 收尾，沒有該事件的瀏覽器才靠逾時。 */
+  const beginProgrammaticScroll = useCallback(() => {
+    programmaticRef.current = true
+    window.clearTimeout(programmaticTimerRef.current)
+    programmaticTimerRef.current = window.setTimeout(() => {
+      programmaticRef.current = false
+    }, PROGRAMMATIC_SCROLL_TIMEOUT_MS)
+  }, [])
+
   const turn = useCallback(
     (delta: number) => {
       const viewport = viewportRef.current
@@ -164,6 +183,7 @@ export function ScrollChapter({
       if (!viewport || !content) return
       const { scrollTop, clientHeight, scrollHeight } = viewport
 
+      // 鍵盤不套換章冷卻：每次按鍵都是明確意圖，不像慣性滾動需要「停下來才算數」
       if (delta > 0 && atEnd(scrollTop, clientHeight, scrollHeight)) {
         onPastEnd()
         return
@@ -174,27 +194,30 @@ export function ScrollChapter({
       }
 
       const top = turnScrollTop(scrollTop, clientHeight, scrollHeight, delta)
-      programmaticUntilRef.current = Date.now() + SMOOTH_SETTLE_MS
+      beginProgrammaticScroll()
       viewport.scrollTo({ top, behavior: 'smooth' })
       if (onUserTurn) onUserTurn(charOffsetAtScrollTop(content, top))
     },
-    [onPastEnd, onPastStart, onUserTurn],
+    [beginProgrammaticScroll, onPastEnd, onPastStart, onUserTurn],
   )
 
-  const reveal = useCallback((offset: number) => {
-    const viewport = viewportRef.current
-    const content = contentRef.current
-    if (!viewport || !content) return
-    const top = revealScrollTop(
-      scrollTopForCharOffset(content, offset),
-      viewport.scrollTop,
-      viewport.clientHeight,
-      viewport.scrollHeight,
-    )
-    if (top === null) return
-    programmaticUntilRef.current = Date.now() + SMOOTH_SETTLE_MS
-    viewport.scrollTo({ top, behavior: 'smooth' })
-  }, [])
+  const reveal = useCallback(
+    (offset: number) => {
+      const viewport = viewportRef.current
+      const content = contentRef.current
+      if (!viewport || !content) return
+      const top = revealScrollTop(
+        scrollTopForCharOffset(content, offset),
+        viewport.scrollTop,
+        viewport.clientHeight,
+        viewport.scrollHeight,
+      )
+      if (top === null) return
+      beginProgrammaticScroll()
+      viewport.scrollTo({ top, behavior: 'smooth' })
+    },
+    [beginProgrammaticScroll],
+  )
 
   useEffect(() => {
     pagerRef.current = { turn, reveal }
