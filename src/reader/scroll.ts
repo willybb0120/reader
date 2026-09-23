@@ -9,6 +9,9 @@ const EDGE_EPSILON = 2
 /** 翻一屏時保留的重疊高度，避免視窗邊緣被切一半的那行漏讀。 */
 const TURN_OVERLAP = 48
 
+/** 句子開頭落在視窗上方這個比例內才算「看得到」：再往下就只剩幾行，整句多半在畫面外。 */
+const VISIBLE_BAND = 2 / 3
+
 export function atStart(scrollTop: number): boolean {
   return scrollTop <= EDGE_EPSILON
 }
@@ -43,6 +46,6 @@ export function revealScrollTop(
   clientHeight: number,
   scrollHeight: number,
 ): number | null {
-  if (sentenceTop >= scrollTop && sentenceTop <= scrollTop + clientHeight) return null
+  if (sentenceTop >= scrollTop && sentenceTop <= scrollTop + clientHeight * VISIBLE_BAND) return null
   return clampScrollTop(sentenceTop - clientHeight / 3, clientHeight, scrollHeight)
 }

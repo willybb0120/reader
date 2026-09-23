@@ -58,4 +58,8 @@ describe('朗讀捲動', () => {
   test('章尾的句子不會捲過頭', () => {
     expect(revealScrollTop(2950, 600, 600, 3000)).toBe(2400)
   })
+
+  test('句子起始在畫面底部邊緣時仍要捲，否則整句都在畫面外', () => {
+    expect(revealScrollTop(1150, 600, 600, 3000)).toBe(950)
+  })
 })
