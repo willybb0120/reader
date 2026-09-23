@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChapterView, type Entry, type PagerApi, type TextSelection } from './reader/ChapterView'
+import { ChapterView } from './reader/ChapterView'
+import type { Entry, PagerApi, TextSelection } from './reader/chapterTypes'
 import { SelectionToolbar } from './reader/SelectionToolbar'
 import { matchShortcut } from './reader/shortcuts'
 import { useAnnotations } from './reader/useAnnotations'
