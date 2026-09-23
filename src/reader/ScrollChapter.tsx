@@ -176,6 +176,19 @@ export function ScrollChapter({
     }, PROGRAMMATIC_SCROLL_TIMEOUT_MS)
   }, [])
 
+  /**
+   * 執行一次程式捲動。目標與現在相同就什麼都不做：
+   * 零位移的 scrollTo 不會發出 scroll 或 scrollend，旗標會一直卡著沒人清。
+   */
+  const scrollProgrammatically = useCallback(
+    (viewport: HTMLElement, top: number) => {
+      if (Math.abs(top - viewport.scrollTop) < 1) return
+      beginProgrammaticScroll()
+      viewport.scrollTo({ top, behavior: 'smooth' })
+    },
+    [beginProgrammaticScroll],
+  )
+
   const turn = useCallback(
     (delta: number) => {
       const viewport = viewportRef.current
@@ -194,11 +207,10 @@ export function ScrollChapter({
       }
 
       const top = turnScrollTop(scrollTop, clientHeight, scrollHeight, delta)
-      beginProgrammaticScroll()
-      viewport.scrollTo({ top, behavior: 'smooth' })
+      scrollProgrammatically(viewport, top)
       if (onUserTurn) onUserTurn(charOffsetAtScrollTop(content, top))
     },
-    [beginProgrammaticScroll, onPastEnd, onPastStart, onUserTurn],
+    [onPastEnd, onPastStart, onUserTurn, scrollProgrammatically],
   )
 
   const reveal = useCallback(
@@ -213,10 +225,9 @@ export function ScrollChapter({
         viewport.scrollHeight,
       )
       if (top === null) return
-      beginProgrammaticScroll()
-      viewport.scrollTo({ top, behavior: 'smooth' })
+      scrollProgrammatically(viewport, top)
     },
-    [beginProgrammaticScroll],
+    [scrollProgrammatically],
   )
 
   useEffect(() => {
