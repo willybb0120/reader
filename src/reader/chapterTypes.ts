@@ -5,7 +5,6 @@ export interface TextSelection {
   start: number
   end: number
   text: string
-  rect: DOMRect
 }
 
 /** 進入章節時要停在哪裡 */
@@ -43,7 +42,7 @@ export interface ChapterViewProps {
   pagerRef: React.RefObject<PagerApi | null>
   onNavigate: (chapterIndex: number, fragment?: string) => void
   onSelect: (selection: TextSelection | null) => void
-  onAnnotationClick: (id: string, rect: DOMRect) => void
+  onAnnotationClick: (id: string) => void
   /** 已在最後一頁還要往下翻 */
   onPastEnd: () => void
   /** 已在第一頁還要往回翻 */

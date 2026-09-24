@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChapterView } from './reader/ChapterView'
 import type { Entry, PagerApi, TextSelection } from './reader/chapterTypes'
 import { SelectionToolbar } from './reader/SelectionToolbar'
+import { pickVisibleRect } from './reader/toolbarPosition'
 import { matchShortcut } from './reader/shortcuts'
 import { useAnnotations } from './reader/useAnnotations'
 import { useBook } from './reader/useBook'
@@ -47,7 +48,7 @@ export function App() {
 
   const [panel, setPanel] = useState<Panel>(null)
   const [selection, setSelection] = useState<TextSelection | null>(null)
-  const [active, setActive] = useState<{ id: string; rect: DOMRect } | null>(null)
+  const [active, setActive] = useState<{ id: string } | null>(null)
   const [editingNote, setEditingNote] = useState<Annotation | null>(null)
   const [highlightRange, setHighlightRange] = useState<{ start: number; end: number } | undefined>()
   const [helpOpen, setHelpOpen] = useState(false)
@@ -204,9 +205,9 @@ export function App() {
     if (next) setActive(null)
   }, [])
 
-  const onAnnotationClick = useCallback((id: string, rect: DOMRect) => {
+  const onAnnotationClick = useCallback((id: string) => {
     setSelection(null)
-    setActive({ id, rect })
+    setActive({ id })
   }, [])
 
   const onPastEnd = useCallback(() => {
@@ -281,7 +282,34 @@ export function App() {
     jump(annotation.chapterIndex, { kind: 'annotation', id: annotation.id })
 
   const reading = status === 'ready' && book && chapter
-  const toolbarRect = active?.rect ?? selection?.rect
+
+  // 工具列自己重算位置，這裡只提供「目前」的量測依據：選取用目前的 Range，標註用對應的 <mark> 元素。
+  // active／selection 只有其中一個會存在，依目前用哪個決定量哪個目標。
+  const toolbarRectOf = useCallback((): DOMRect | null => {
+    if (active) {
+      // wrapRange 是逐個文字節點分別包裝，跨段落的標註會產生多個 <mark> 共用同一個 id；
+      // 只挑文件順序的第一個會選到使用者根本看不到的片段（可能已經捲出畫面），
+      // 用 pickVisibleRect 改挑目前看得到、或離可視範圍最近的那個
+      const marks = document.querySelectorAll<HTMLElement>(`mark[data-annotation="${CSS.escape(active.id)}"]`)
+      const rects = [...marks].map((mark) => mark.getBoundingClientRect())
+      return pickVisibleRect(rects, window.innerHeight)
+    }
+    if (selection) {
+      const sel = window.getSelection()
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null
+      return sel.getRangeAt(0).getBoundingClientRect()
+    }
+    return null
+  }, [active, selection])
+
+  // SelectionToolbar 拿這個判斷「是不是換了新的量測目標」，藉此決定要不要重設上下翻面的
+  // 遲滯記憶；不能讓它用 toolbarRectOf 的物件識別代替，拖曳選取時 selection 每次 debounce
+  // 都是新物件，起訖位移沒變就不該被當成新目標
+  const toolbarTargetKey = active
+    ? `annotation:${active.id}`
+    : selection
+      ? `selection:${selection.start}:${selection.end}`
+      : null
 
   return (
     <div className="app" data-reading={Boolean(reading)}>
@@ -391,9 +419,14 @@ export function App() {
         </main>
       )}
 
-      {toolbarRect && (
+      {(active || selection) && (
         <SelectionToolbar
-          rect={toolbarRect}
+          rectOf={toolbarRectOf}
+          targetKey={toolbarTargetKey}
+          // 分頁／滾動模式切換時 ChapterView 整個卸載重掛，但 SelectionToolbar 不會跟著重掛、
+          // rectOf 的識別也不會變，光靠 rectOf 這個相依偵測不到「該重新量一次」；
+          // 把模式當訊號傳進去，讓它變化時立刻重算，不必等到下一次捲動才發現跟丟了
+          resyncSignal={settings.scroll}
           existing={activeAnnotation}
           onHighlight={highlight}
           onNote={openNote}
