@@ -854,6 +854,117 @@ try {
       '切換模式後工具列仍顯示在切換前的位置（Finding 1：SelectionToolbar 沒有立刻重新量測，' +
         '凍結成幽靈工具列，選取早已因為內容重新掛載而失效）',
     )
+  await phone.evaluate(() => window.getSelection().removeAllRanges())
+  await phone.waitForTimeout(200)
+
+  // 斷言二之二（fix round 2）：跟上面同一個問題，改測 active（標註）路徑。文字選取在模式
+  // 切換後會因為內容整個重掛而失效，「正確行為」是工具列消失；但標註是用 id 查找，重掛後
+  // 新內容裡同 id 的 <mark> 還在，「正確行為」應該是工具列繼續追蹤，而不是消失或凍結。
+  // resyncSignal／document-capture 都是為了這條路徑而修的，要有留在 repo 的自動化覆蓋，
+  // 不能只靠跑完即丟的臨時腳本。
+  await phone.evaluate(() => {
+    document.querySelector('.pager--scroll').scrollTop = 0
+  })
+  await phone.waitForTimeout(300)
+  const highlightedForModeSwitch = await phone.evaluate(() => {
+    const p = [...document.querySelectorAll('.chapter p')].find((el) => (el.textContent ?? '').trim().length > 20)
+    if (!p) return false
+    const range = document.createRange()
+    range.selectNodeContents(p)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    return true
+  })
+  if (!highlightedForModeSwitch) fail('找不到可用於標註跨模式切換測試的段落')
+  await phone.waitForSelector('.selection-toolbar')
+  await phone.click('[aria-label="藍色劃線"]')
+  await phone.waitForSelector('.chapter mark[data-annotation]')
+  await phone.waitForTimeout(300)
+
+  const annotationIdForModeSwitch = await phone.evaluate(
+    () => document.querySelector('mark[data-annotation]')?.dataset.annotation ?? null,
+  )
+  if (!annotationIdForModeSwitch) fail('找不到剛建立的標註，測不出標註跨模式切換')
+
+  // 點擊該標註，走 active 路徑開出工具列（帶「刪除」按鈕，跟 selection 路徑的工具列不同）
+  await phone.evaluate((id) => {
+    document
+      .querySelector(`mark[data-annotation="${id}"]`)
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+  }, annotationIdForModeSwitch)
+  await phone.waitForSelector('.selection-toolbar')
+  await phone.waitForTimeout(200)
+  const buttonsBeforeModeSwitch = await phone.evaluate(() =>
+    [...document.querySelectorAll('.selection-toolbar button')].map((b) => b.textContent),
+  )
+  if (!buttonsBeforeModeSwitch.includes('刪除'))
+    fail('點擊標註後工具列沒有刪除按鈕，不是 active 路徑，測不出這條')
+
+  // 切到分頁模式再切回滾動模式
+  await phone.click('[aria-label="閱讀設定"]')
+  await phone.waitForSelector('.drawer--right')
+  await phone.click('.setting--row:has-text("直式滾動") input')
+  await phone.keyboard.press('Escape')
+  await phone.waitForTimeout(500)
+  if (await phone.$('.pager--scroll')) fail('切到分頁模式失敗，測不出標註跨模式切換')
+
+  await phone.click('[aria-label="閱讀設定"]')
+  await phone.waitForSelector('.drawer--right')
+  await phone.click('.setting--row:has-text("直式滾動") input')
+  await phone.keyboard.press('Escape')
+  await phone.waitForSelector('.pager--scroll', { timeout: 5000 })
+  await phone.waitForTimeout(400)
+
+  if (!(await phone.$('.selection-toolbar'))) {
+    fail(
+      '標註工具列在模式切換後消失了（fix round 2：active 路徑應該要在新內容裡重新找到同 id 的 ' +
+        '<mark> 並繼續追蹤，不像 selection 路徑那樣「正確消失」）',
+    )
+  } else {
+    const beforeAnnoScroll = await phone.evaluate(() => {
+      const toolbar = document.querySelector('.selection-toolbar')
+      const mark = document.querySelector('mark[data-annotation]')
+      return {
+        toolbarTop: toolbar ? parseFloat(toolbar.style.top) : null,
+        markTop: mark ? mark.getBoundingClientRect().top : null,
+      }
+    })
+    if (beforeAnnoScroll.toolbarTop === null || beforeAnnoScroll.markTop === null) {
+      fail('模式切換後找不到工具列或標註，測不出捲動追蹤')
+    } else {
+      await phone.evaluate(() => {
+        document.querySelector('.pager--scroll').scrollTop += 150
+      })
+      await phone.waitForTimeout(200)
+      const afterAnnoScroll = await phone.evaluate(() => {
+        const toolbar = document.querySelector('.selection-toolbar')
+        const mark = document.querySelector('mark[data-annotation]')
+        return {
+          toolbarTop: toolbar ? parseFloat(toolbar.style.top) : null,
+          markTop: mark ? mark.getBoundingClientRect().top : null,
+        }
+      })
+      if (afterAnnoScroll.toolbarTop === null) {
+        fail('模式切換後再捲動，標註工具列消失了')
+      } else {
+        const annoToolbarDelta = beforeAnnoScroll.toolbarTop - afterAnnoScroll.toolbarTop
+        const annoMarkDelta = beforeAnnoScroll.markTop - afterAnnoScroll.markTop
+        if (Math.abs(annoToolbarDelta - annoMarkDelta) > 8)
+          fail(
+            `標註工具列模式切換＋捲動後沒有跟著標註位移：標註位移 ${annoMarkDelta.toFixed(1)}px，` +
+              `工具列位移 ${annoToolbarDelta.toFixed(1)}px`,
+          )
+      }
+    }
+  }
+
+  // 收尾：清掉這次的選取／標註狀態，避免殘留的 active 干擾後面的測試
+  await phone.evaluate(() => window.getSelection().removeAllRanges())
+  if (await phone.$('[aria-label="藍色劃線"]')) {
+    await phone.click('[aria-label="藍色劃線"]')
+    await phone.waitForTimeout(200)
+  }
 
   // 斷言三、四共用的量測環境：捲到章首，準備測試工具列跟隨捲動與上下翻面遲滯（Finding 3）
   const geometry = await phone.evaluate(() => {
@@ -900,7 +1011,10 @@ try {
   // 只是遲滯帶讓「即將翻面前會被夾住一小段」這件事第一次變得看得到。跳過被夾住的樣本，
   // 不影響本測試真正要守住的兩件事：翻面次數與捲出畫面要隱藏。
   const side = (transform) => (transform.includes('-100%') ? 'above' : 'below')
-  const CLAMP_BOUNDS = [96, 60] // TOP_MARGIN、BOTTOM_MARGIN，與 toolbarPosition.ts 保持一致
+  // 手抄自 src/reader/toolbarPosition.ts 的 TOP_MARGIN（96）／BOTTOM_MARGIN（60）。
+  // verify.mjs 是純 node 腳本，沒辦法直接 import 那邊的 TS 常數；那邊改這兩個值，
+  // 這裡要記得同步改，否則這個判斷會默默失效。
+  const CLAMP_BOUNDS = [96, 60]
   const isClamped = (top) => CLAMP_BOUNDS.some((bound) => Math.abs(top - bound) < 1)
   let flips = 0
   let prevSide = null
