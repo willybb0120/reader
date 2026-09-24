@@ -34,8 +34,8 @@ const BY_KEY: Record<string, ShortcutAction> = {
 
 /** 供說明面板顯示的快捷鍵一覽。 */
 export const SHORTCUT_HELP: ReadonlyArray<{ keys: string; description: string }> = [
-  { keys: '← / →', description: '上一頁 / 下一頁' },
-  { keys: 'Space', description: '下一頁' },
+  { keys: '← / →', description: '上一頁 / 下一頁（滾動模式為上下捲動）' },
+  { keys: 'Space', description: '下一頁 / 往下捲動' },
   { keys: 'T', description: '目錄' },
   { keys: 'F 或 /', description: '搜尋全書' },
   { keys: 'H', description: '劃線與筆記' },

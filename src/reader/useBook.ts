@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { parseEpub, type Book, type Chapter } from '../epub/parseEpub'
-import type { Entry } from './ChapterView'
+import type { Entry } from './chapterTypes'
 import { loadBookFile, touchBook } from '../store/library'
 import { loadProgress, overallProgress, saveProgress } from '../store/progress'
 import { withTrimmedImages } from './trimImages'

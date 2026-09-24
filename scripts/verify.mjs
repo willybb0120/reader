@@ -50,6 +50,74 @@ async function tap(page, side) {
   await page.waitForTimeout(450)
 }
 
+/**
+ * 模擬觸控拉曳：在 selector 元素上送出 touchstart，再分好幾段送 touchmove 從 startY 移到 endY。
+ * 刻意不送 touchend，留給呼叫端決定何時放開（拉曳中截圖要用）。
+ * Chromium 的 Touch／TouchEvent 建構子在 hasTouch:true 的 context 下就能用，
+ * 不需要真的走 CDP 的原生輸入管線，足以驗證我們自己的 touchstart/move/end 監聽邏輯。
+ */
+async function touchPullStart(page, selector, startY, endY, steps = 8) {
+  await page.evaluate(
+    ({ selector, startY }) => {
+      const target = document.querySelector(selector)
+      const rect = target.getBoundingClientRect()
+      const x = rect.left + rect.width / 2
+      window.__touchX = x
+      const touch = new Touch({ identifier: 1, target, clientX: x, clientY: startY })
+      target.dispatchEvent(
+        new TouchEvent('touchstart', {
+          touches: [touch],
+          targetTouches: [touch],
+          changedTouches: [touch],
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+    },
+    { selector, startY },
+  )
+  for (let i = 1; i <= steps; i++) {
+    const y = startY + ((endY - startY) * i) / steps
+    await page.evaluate(
+      ({ selector, y }) => {
+        const target = document.querySelector(selector)
+        const touch = new Touch({ identifier: 1, target, clientX: window.__touchX, clientY: y })
+        target.dispatchEvent(
+          new TouchEvent('touchmove', {
+            touches: [touch],
+            targetTouches: [touch],
+            changedTouches: [touch],
+            bubbles: true,
+            cancelable: true,
+          }),
+        )
+      },
+      { selector, y },
+    )
+    await page.waitForTimeout(16)
+  }
+}
+
+/** 放開拉曳：送出 touchend，維持 clientY 在最後拉到的位置。 */
+async function touchPullEnd(page, selector, endY) {
+  await page.evaluate(
+    ({ selector, endY }) => {
+      const target = document.querySelector(selector)
+      const touch = new Touch({ identifier: 1, target, clientX: window.__touchX, clientY: endY })
+      target.dispatchEvent(
+        new TouchEvent('touchend', {
+          touches: [],
+          targetTouches: [],
+          changedTouches: [touch],
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+    },
+    { selector, endY },
+  )
+}
+
 await waitForServer()
 
 const browser = await chromium.launch()
@@ -339,6 +407,198 @@ try {
   await page.waitForTimeout(350)
   if ((await readState(page)).page === beforeKey.page) fail('方向鍵沒有翻頁')
 
+  // 直式滾動：切換模式後內容改為垂直捲動
+  await page.click('[aria-label="閱讀設定"]')
+  await page.waitForSelector('.drawer--right')
+  await page.click('.setting--row:has-text("直式滾動") input')
+  await page.keyboard.press('Escape')
+  await page.waitForSelector('.pager--scroll', { timeout: 5000 })
+  await page.waitForTimeout(600)
+
+  const scrollBox = await page.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    return { scrollHeight: pager.scrollHeight, clientHeight: pager.clientHeight }
+  })
+  if (scrollBox.scrollHeight <= scrollBox.clientHeight)
+    fail(`滾動模式的內容沒有超出視窗：${scrollBox.scrollHeight} / ${scrollBox.clientHeight}`)
+
+  const pageStillFixed = await page.evaluate(
+    () => document.documentElement.scrollHeight - document.documentElement.clientHeight,
+  )
+  if (pageStillFixed > 0) fail(`滾動模式下整頁也跟著捲動 ${pageStillFixed}px`)
+  await page.screenshot({ path: `${outDir}/20-scroll.png` })
+
+  // 捲到中段後重新載入，應回到大致相同的位置
+  await page.evaluate(() => document.querySelector('.pager--scroll').scrollTo({ top: 1200 }))
+  await page.waitForTimeout(1200)
+  const scrollBefore = await page.evaluate(() => ({
+    top: document.querySelector('.pager--scroll').scrollTop,
+    title: document.querySelector('.topbar__title').textContent,
+  }))
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.pager--scroll')
+  await page.waitForTimeout(1200)
+  const scrollAfter = await page.evaluate(() => ({
+    top: document.querySelector('.pager--scroll').scrollTop,
+    title: document.querySelector('.topbar__title').textContent,
+  }))
+  if (scrollAfter.title !== scrollBefore.title)
+    fail(`滾動模式重新載入後章節不同：${scrollBefore.title} → ${scrollAfter.title}`)
+  if (Math.abs(scrollAfter.top - scrollBefore.top) > 80)
+    fail(`滾動模式重新載入後位置差太多：${scrollBefore.top} → ${scrollAfter.top}`)
+  await page.screenshot({ path: `${outDir}/21-scroll-restored.png` })
+
+  // 章尾銜接：捲到底之後再滑一次才換章
+  const scrollTitle = () => page.textContent('.topbar__title')
+  const beforeCross = await scrollTitle()
+  await page.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    pager.scrollTop = pager.scrollHeight
+  })
+  await page.waitForTimeout(900)
+  if ((await scrollTitle()) !== beforeCross) fail('滾動到底就直接換章了，應該要再滑一次')
+
+  await page.mouse.move(400, 600)
+  await page.mouse.wheel(0, 200)
+  await page.waitForTimeout(900)
+  const afterCross = await scrollTitle()
+  if (afterCross === beforeCross) fail('滾動到底再滑一次沒有換到下一章')
+  const enteredTop = await page.evaluate(() => document.querySelector('.pager--scroll').scrollTop)
+  if (enteredTop > 4) fail(`換章後沒有回到章首：scrollTop ${enteredTop}`)
+  await page.screenshot({ path: `${outDir}/22-scroll-next-chapter.png` })
+
+  // 章首銜接：在頂端往上滑回到上一章的章尾
+  await page.waitForTimeout(700)
+  await page.mouse.wheel(0, -200)
+  await page.waitForTimeout(900)
+  if ((await scrollTitle()) !== beforeCross) fail('在章首往上滑沒有回到上一章')
+  const backTop = await page.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    return pager.scrollHeight - pager.clientHeight - pager.scrollTop
+  })
+  if (backTop > 8) fail(`往回換章沒有停在上一章章尾：距底 ${backTop}px`)
+
+  // 冷卻期間的連續事件不該連跳：剛換到下一章、還在冷卻窗內時連續收到邊界事件，
+  // 冷卻要跟著順延，不能只看「距離第一次換章多久」，否則累計超過 600ms 就會又換一次
+  await page.waitForTimeout(700)
+  await page.mouse.wheel(0, 200)
+  await page.waitForTimeout(200)
+  const afterCooldownCross = await scrollTitle()
+  await page.mouse.wheel(0, -200)
+  await page.waitForTimeout(220)
+  await page.mouse.wheel(0, -200)
+  await page.waitForTimeout(220)
+  await page.mouse.wheel(0, -200)
+  await page.waitForTimeout(250)
+  if ((await scrollTitle()) !== afterCooldownCross)
+    fail('冷卻期間的連續滾輪事件又換了一次章')
+
+  // 方向鍵在滾動模式要捲一屏。前面的換章測試可能剛好停在一屏內就放得下的短章節，
+  // 那樣的章節本來就沒有捲動空間、按方向鍵會直接換到下一章（符合到底換章的規格），
+  // 所以先確保目前章節捲得動，再量測這次按鍵是否真的往下捲。
+  for (let guard = 0; guard < 4; guard++) {
+    const box = await page.evaluate(() => {
+      const pager = document.querySelector('.pager--scroll')
+      return { scrollHeight: pager.scrollHeight, clientHeight: pager.clientHeight }
+    })
+    if (box.scrollHeight > box.clientHeight + 4) break
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(700)
+  }
+  const keyBefore = await page.evaluate(() => document.querySelector('.pager--scroll').scrollTop)
+  await page.keyboard.press('ArrowRight')
+  await page.waitForTimeout(700)
+  const keyAfter = await page.evaluate(() => document.querySelector('.pager--scroll').scrollTop)
+  if (keyAfter <= keyBefore) fail(`滾動模式方向鍵沒有往下捲：${keyBefore} → ${keyAfter}`)
+
+  // 朗讀時正在念的句子要留在畫面上
+  await page.click('[aria-label="開始朗讀"]')
+  await page.waitForSelector('.chapter mark[data-speaking]', { timeout: 5000 })
+  const speakingVisible = await page
+    .waitForFunction(
+      () => {
+        const mark = document.querySelector('.chapter mark[data-speaking]')
+        const pager = document.querySelector('.pager--scroll')
+        if (!mark || !pager) return false
+        const rect = mark.getClientRects()[0]
+        const bounds = pager.getBoundingClientRect()
+        return !!rect && rect.top >= bounds.top - 4 && rect.bottom <= bounds.bottom + 4
+      },
+      null,
+      { timeout: 8000 },
+    )
+    .then(() => true)
+    .catch(() => false)
+  if (!speakingVisible) fail('滾動模式下正在朗讀的句子沒有留在畫面上')
+  await page.screenshot({ path: `${outDir}/23-scroll-narration.png` })
+
+  // 守住程式捲動旗標：連續念好幾句時，正在念的句子在內容裡的絕對位置只能前進，
+  // 不能倒退。旗標壞掉時朗讀跟隨的每一次 seek 都會被誤判成使用者跳讀，
+  // 反覆把畫面拉回視窗頂端那一句，絕對位置就會忽大忽小。
+  // 章節念完會自動跳到下一章，位置本來就會重新從頭起算，跨章不列入比較。
+  const speakingSamples = []
+  for (let i = 0; i < 10; i++) {
+    const sample = await page.evaluate(() => {
+      const mark = document.querySelector('.chapter mark[data-speaking]')
+      const pager = document.querySelector('.pager--scroll')
+      if (!mark || !pager) return null
+      return {
+        title: document.querySelector('.topbar__title')?.textContent ?? '',
+        position: pager.scrollTop + mark.getBoundingClientRect().top,
+      }
+    })
+    if (sample !== null) speakingSamples.push(sample)
+    await page.waitForTimeout(220)
+  }
+  if (speakingSamples.length < 3)
+    fail(`朗讀樣本太少，無法驗證旗標：${speakingSamples.length}`)
+  for (let i = 1; i < speakingSamples.length; i++) {
+    if (speakingSamples[i].title !== speakingSamples[i - 1].title) continue
+    if (speakingSamples[i].position < speakingSamples[i - 1].position - 4)
+      fail(
+        `朗讀位置退回頂端，程式捲動旗標可能沒有正確歸位：${speakingSamples.map((s) => s.position).join(' → ')}`,
+      )
+  }
+
+  await page.click('[aria-label="暫停朗讀"]')
+  await page.waitForTimeout(300)
+
+  // 守住 Critical 1（切換分頁／滾動時的位置還原）：換到另一個內容夠長的章節。
+  // 主線測試一路用的目錄第 3 項內容偏短（只比一屏多一點），捲到底也未必能跨過
+  // 分頁版面的第一頁邊界，驗不出這個 bug；這裡改用第 1 項，確保有足夠篇幅可以捲。
+  await page.click('[aria-label="開啟目錄"]')
+  await page.waitForSelector('.drawer')
+  await page.waitForTimeout(400)
+  await (await page.$$('.toc__item'))[1].click()
+  await page.waitForSelector('.pager--scroll')
+  await page.waitForTimeout(600)
+
+  const midBox = await page.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    return { scrollHeight: pager.scrollHeight, clientHeight: pager.clientHeight }
+  })
+  if (midBox.scrollHeight <= midBox.clientHeight * 3)
+    fail(`章節內容不夠長，測不出捲到中段的效果：${midBox.scrollHeight} / ${midBox.clientHeight}`)
+  await page.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    pager.scrollTo({ top: (pager.scrollHeight - pager.clientHeight) / 2 })
+  })
+  await page.waitForTimeout(900)
+  const midScrollTop = await page.evaluate(() => document.querySelector('.pager--scroll').scrollTop)
+  if (midScrollTop < 50) fail(`捲到中段失敗，scrollTop 只有 ${midScrollTop}`)
+
+  // 切回分頁模式，分頁行為仍然正常
+  await page.click('[aria-label="閱讀設定"]')
+  await page.waitForSelector('.drawer--right')
+  await page.click('.setting--row:has-text("直式滾動") input')
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(700)
+  if (await page.$('.pager--scroll')) fail('關掉直式滾動後仍是滾動版面')
+  const backToPaged = await readState(page)
+  if (backToPaged.pages < 2) fail(`切回分頁後沒有重新分頁：總頁數 ${backToPaged.pages}`)
+  if (backToPaged.page === 0)
+    fail('切回分頁後頁碼是 0，捲動中段的位置沒有帶回去（Critical 1：切換版面時位置還原失效）')
+
   // 回到書櫃
   await page.click('[aria-label="回到書櫃"]')
   await page.waitForSelector('.library__grid')
@@ -365,6 +625,168 @@ try {
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   )
   if (overflow > 0) fail(`手機版面有 ${overflow}px 水平溢出`)
+
+  // 拉曳換章：切到直式滾動，並跳到內容夠長的章節才測得出拉曳
+  await phone.click('[aria-label="閱讀設定"]')
+  await phone.waitForSelector('.drawer--right')
+  await phone.click('.setting--row:has-text("直式滾動") input')
+  await phone.keyboard.press('Escape')
+  await phone.waitForSelector('.pager--scroll', { timeout: 5000 })
+  await phone.waitForTimeout(400)
+
+  await phone.click('[aria-label="開啟目錄"]')
+  await phone.waitForSelector('.drawer')
+  await phone.waitForTimeout(300)
+  await (await phone.$$('.toc__item'))[1].click()
+  await phone.waitForSelector('.pager--scroll')
+  await phone.waitForTimeout(500)
+
+  if (await phone.$('.pull-indicator')) fail('沒有拉曳卻出現指示器常駐元素')
+
+  const pullBox = await phone.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    return { scrollHeight: pager.scrollHeight, clientHeight: pager.clientHeight }
+  })
+  if (pullBox.scrollHeight <= pullBox.clientHeight * 2)
+    fail(`手機章節內容不夠長，測不出拉曳換章：${pullBox.scrollHeight} / ${pullBox.clientHeight}`)
+
+  const pullTitle = () => phone.textContent('.topbar__title')
+  const titleBeforePull = await pullTitle()
+  const pullChapterTransform = () =>
+    phone.evaluate(() => getComputedStyle(document.querySelector('.pager--scroll .chapter')).transform)
+
+  const pullBoxRect = await phone.locator('.pager--scroll').boundingBox()
+  const pullStartY = pullBoxRect.y + pullBoxRect.height * 0.7
+
+  // 捲到章尾，準備測試往上拉
+  await phone.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    pager.scrollTop = pager.scrollHeight
+  })
+  await phone.waitForTimeout(500)
+
+  // 案例一：拉不夠（門檻 72px，阻尼 0.4，等於要拉超過 180px 原始位移）就放開，要取消
+  await touchPullStart(phone, '.pager--scroll', pullStartY, pullStartY - 90)
+  await phone.waitForTimeout(80)
+  const draggingTransform = await pullChapterTransform()
+  if (draggingTransform === 'none') fail('拉曳中內容沒有跟著位移')
+  const notArmedYet = await phone.evaluate(() => document.querySelector('.pull-indicator')?.dataset.armed)
+  if (notArmedYet !== 'false') fail(`拉不夠時指示器不應標記為 armed：${notArmedYet}`)
+  await touchPullEnd(phone, '.pager--scroll', pullStartY - 90)
+  await phone.waitForTimeout(400)
+  if ((await pullTitle()) !== titleBeforePull) fail('拉不夠門檻卻換章了')
+  const canceledTransform = await pullChapterTransform()
+  if (canceledTransform !== 'none') fail(`拉不夠取消後位移沒有回到 0：${canceledTransform}`)
+  if (await phone.$('.pull-indicator')) fail('放開取消後指示器沒有消失')
+
+  // 案例二：拉超過門檻，過門檻但還沒放開時截圖，放開要真的換章
+  await touchPullStart(phone, '.pager--scroll', pullStartY, pullStartY - 220)
+  await phone.waitForTimeout(80)
+  const armed = await phone.evaluate(() => document.querySelector('.pull-indicator')?.dataset.armed)
+  if (armed !== 'true') fail(`過門檻時指示器沒有標記為 armed：${armed}`)
+  await phone.screenshot({ path: `${outDir}/24-pull-indicator.png` })
+
+  await touchPullEnd(phone, '.pager--scroll', pullStartY - 220)
+  await phone.waitForTimeout(500)
+  if ((await pullTitle()) === titleBeforePull) fail('拉超過門檻放開卻沒有換章')
+  const pullEnteredTop = await phone.evaluate(() => document.querySelector('.pager--scroll').scrollTop)
+  if (pullEnteredTop > 4) fail(`拉曳換章後沒有停在章首：scrollTop ${pullEnteredTop}`)
+  if (await phone.$('.pull-indicator')) fail('換章後指示器沒有消失')
+
+  // 案例三（回歸）：從章節中段開始，單一次連續向上滑動——先自然捲到底，
+  // 手指不放繼續往上拉一小段（遠低於門檻）。拉曳的位移必須從「進入拉曳」那一刻重新起算，
+  // 不能沿用「手指按下到現在」的整段距離，否則這個最自然的換章手勢會在進入拉曳的第一幀
+  // 就被誤判成已經拉超過門檻。
+  // 案例一、二已經各換過一次章，目前所在的章節不保證夠長，回到目錄的第 1 項重新取一個長章節
+  await phone.click('[aria-label="開啟目錄"]')
+  await phone.waitForSelector('.drawer')
+  await phone.waitForTimeout(300)
+  await (await phone.$$('.toc__item'))[1].click()
+  await phone.waitForSelector('.pager--scroll')
+  await phone.waitForTimeout(500)
+  await phone.evaluate(() => {
+    document.querySelector('.pager--scroll').scrollTop = 0
+  })
+  await phone.waitForTimeout(300)
+  const continuousBox = await phone.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    return { scrollHeight: pager.scrollHeight, clientHeight: pager.clientHeight }
+  })
+  // 挑一個離章尾 220px 的起點：模擬一次自然的連續滑動捲到底，
+  // 又足以跟「到底之後只多拉 40px」（遠低於 180px 的門檻原始位移）明確區分開
+  const distanceToEnd = 220
+  const extraPastEdge = 40
+  const startScrollTop = continuousBox.scrollHeight - continuousBox.clientHeight - distanceToEnd
+  if (startScrollTop <= 0)
+    fail(`章節不夠長，測不出案例三的連續滑動情境：${continuousBox.scrollHeight}`)
+  await phone.evaluate((top) => {
+    document.querySelector('.pager--scroll').scrollTop = top
+  }, startScrollTop)
+  await phone.waitForTimeout(300)
+
+  const continuousTitleBefore = await pullTitle()
+  const swipeStartY = pullBoxRect.y + pullBoxRect.height * 0.9
+  const totalDy = distanceToEnd + extraPastEdge
+  const swipeSteps = 26
+
+  await phone.evaluate(
+    ({ startY }) => {
+      const target = document.querySelector('.pager--scroll')
+      const rect = target.getBoundingClientRect()
+      window.__touchX = rect.left + rect.width / 2
+      const touch = new Touch({ identifier: 1, target, clientX: window.__touchX, clientY: startY })
+      target.dispatchEvent(
+        new TouchEvent('touchstart', {
+          touches: [touch],
+          targetTouches: [touch],
+          changedTouches: [touch],
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+    },
+    { startY: swipeStartY },
+  )
+  for (let i = 1; i <= swipeSteps; i++) {
+    const cumulativeDy = (totalDy * i) / swipeSteps
+    const clientY = swipeStartY - cumulativeDy
+    await phone.evaluate(
+      ({ cumulativeDy, distanceToEnd, startScrollTop, clientY }) => {
+        const pager = document.querySelector('.pager--scroll')
+        // 模擬原生捲動接手這段位移：還沒到底之前，手指移動先被拿去捲內容，
+        // 到底之後 scrollTop 就不再推進（我們自己的 handler 接管，preventDefault）
+        pager.scrollTop = Math.min(startScrollTop + cumulativeDy, startScrollTop + distanceToEnd)
+        const touch = new Touch({ identifier: 1, target: pager, clientX: window.__touchX, clientY })
+        pager.dispatchEvent(
+          new TouchEvent('touchmove', {
+            touches: [touch],
+            targetTouches: [touch],
+            changedTouches: [touch],
+            bubbles: true,
+            cancelable: true,
+          }),
+        )
+      },
+      { cumulativeDy, distanceToEnd, startScrollTop, clientY },
+    )
+    await phone.waitForTimeout(16)
+  }
+
+  const continuousArmed = await phone.evaluate(
+    () => document.querySelector('.pull-indicator')?.dataset.armed,
+  )
+  if (continuousArmed !== 'false')
+    fail(
+      `連續滑動捲到底、再多拉 ${extraPastEdge}px（遠低於門檻）就被判定成 armed=${continuousArmed}：` +
+        `拉曳位移沒有從進入拉曳那一刻重新起算，沿用了手指按下到現在的整段距離`,
+    )
+
+  await touchPullEnd(phone, '.pager--scroll', swipeStartY - totalDy)
+  await phone.waitForTimeout(400)
+  if ((await pullTitle()) !== continuousTitleBefore)
+    fail('連續滑動捲到底再多拉一點（未達門檻）卻換章了')
+  if (await phone.$('.pull-indicator')) fail('案例三放開後指示器沒有消失')
+
   await phone.close()
 
   // 離線

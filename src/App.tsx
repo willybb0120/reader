@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChapterView, type Entry, type PagerApi, type TextSelection } from './reader/ChapterView'
+import { ChapterView } from './reader/ChapterView'
+import type { Entry, PagerApi, TextSelection } from './reader/chapterTypes'
 import { SelectionToolbar } from './reader/SelectionToolbar'
 import { matchShortcut } from './reader/shortcuts'
 import { useAnnotations } from './reader/useAnnotations'
@@ -9,7 +10,7 @@ import { useNarration } from './reader/useNarration'
 import { PlayerBar } from './ui/PlayerBar'
 import type { SearchHit } from './reader/search'
 import { toMarkdown, type Annotation, type Color } from './store/annotations'
-import { LIMITS, type Theme } from './store/settings'
+import { LIMITS, type Settings, type Theme } from './store/settings'
 import { useSettings } from './store/useSettings'
 import { AnnotationsPanel } from './ui/AnnotationsPanel'
 import { HelpDialog } from './ui/HelpDialog'
@@ -51,6 +52,42 @@ export function App() {
   const [highlightRange, setHighlightRange] = useState<{ start: number; end: number } | undefined>()
   const [helpOpen, setHelpOpen] = useState(false)
   const pagerRef = useRef<PagerApi | null>(null)
+
+  /** 最後回報的字元位移，切換版面模式時用來留在原處 */
+  const positionRef = useRef(0)
+  const modeRef = useRef(settings.scroll)
+  /**
+   * 切換模式當下記下的位移。不能在下面的 effect 裡回頭讀 positionRef：
+   * 新版面元件掛載後，它自己的 report effect 可能先於這個 effect 執行，
+   * 把 positionRef 覆寫成新版面剛結算出來的落點，等於原地不動。
+   */
+  const pendingOffsetRef = useRef(0)
+
+  const onPositionChange = useCallback(
+    (charOffset: number, length: number) => {
+      positionRef.current = charOffset
+      reportPosition(charOffset, length)
+    },
+    [reportPosition],
+  )
+
+  /** 設定變更的唯一入口：切換分頁／滾動要在事件當下就記住位置，不能事後補救 */
+  const changeSettings = useCallback(
+    (patch: Partial<Settings>) => {
+      if (patch.scroll !== undefined && patch.scroll !== settings.scroll)
+        pendingOffsetRef.current = positionRef.current
+      updateSettings(patch)
+    },
+    [settings.scroll, updateSettings],
+  )
+
+  // 切換分頁／滾動會換掉整個版面元件，要主動回到原本讀到的位置
+  useEffect(() => {
+    if (modeRef.current === settings.scroll) return
+    modeRef.current = settings.scroll
+    if (chapter)
+      void goToChapter(chapter.index, { kind: 'offset', offset: pendingOffsetRef.current })
+  }, [settings.scroll, chapter, goToChapter])
 
   const chapterAnnotations = useMemo(
     () => (chapter ? (byChapter.get(chapter.index) ?? []) : []),
@@ -137,12 +174,12 @@ export function App() {
         case 'fontDown': {
           const [min, max] = LIMITS.fontSize
           const next = settings.fontSize + (action === 'fontUp' ? 1 : -1)
-          updateSettings({ fontSize: Math.min(max, Math.max(min, next)) })
+          changeSettings({ fontSize: Math.min(max, Math.max(min, next)) })
           break
         }
         case 'cycleTheme': {
           const order: Theme[] = ['light', 'sepia', 'dark']
-          updateSettings({ theme: order[(order.indexOf(settings.theme) + 1) % order.length] })
+          changeSettings({ theme: order[(order.indexOf(settings.theme) + 1) % order.length] })
           break
         }
         default:
@@ -322,6 +359,7 @@ export function App() {
       {reading && (
         <main className="reader">
           <ChapterView
+            scroll={settings.scroll}
             chapter={chapter}
             annotations={chapterAnnotations}
             entry={entry}
@@ -334,7 +372,7 @@ export function App() {
             onPastEnd={onPastEnd}
             onPastStart={onPastStart}
             speakingRange={narration.sentence}
-            onPositionChange={reportPosition}
+            onPositionChange={onPositionChange}
             onUserTurn={narration.playing ? narration.seekToOffset : undefined}
           />
           <PlayerBar
@@ -347,8 +385,8 @@ export function App() {
             onToggle={narration.toggle}
             onPrevious={narration.previous}
             onNext={narration.next}
-            onRate={(rate) => updateSettings({ rate })}
-            onVoice={(voiceUri) => updateSettings({ voiceUri })}
+            onRate={(rate) => changeSettings({ rate })}
+            onVoice={(voiceUri) => changeSettings({ voiceUri })}
           />
         </main>
       )}
@@ -388,7 +426,7 @@ export function App() {
       {panel === 'settings' && (
         <SettingsPanel
           settings={settings}
-          onChange={updateSettings}
+          onChange={changeSettings}
           onShowShortcuts={() => {
             setPanel(null)
             setHelpOpen(true)

@@ -12,6 +12,8 @@ export interface Settings {
   /** 字距（em） */
   letterSpacing: number
   justify: boolean
+  /** 直式滾動閱讀，false 為橫向分頁 */
+  scroll: boolean
   /** 朗讀速度 */
   rate: number
   /** 朗讀語音的 voiceURI，空字串代表用預設 */
@@ -26,6 +28,7 @@ export const DEFAULT_SETTINGS: Settings = {
   readingWidth: 34,
   letterSpacing: 0,
   justify: true,
+  scroll: false,
   rate: 1,
   voiceUri: '',
 }
@@ -59,6 +62,7 @@ function normalize(raw: unknown): Settings {
     readingWidth: clamp(input.readingWidth, LIMITS.readingWidth, DEFAULT_SETTINGS.readingWidth),
     letterSpacing: clamp(input.letterSpacing, LIMITS.letterSpacing, DEFAULT_SETTINGS.letterSpacing),
     justify: typeof input.justify === 'boolean' ? input.justify : DEFAULT_SETTINGS.justify,
+    scroll: typeof input.scroll === 'boolean' ? input.scroll : DEFAULT_SETTINGS.scroll,
     rate: clamp(input.rate, LIMITS.rate, DEFAULT_SETTINGS.rate),
     voiceUri: typeof input.voiceUri === 'string' ? input.voiceUri : DEFAULT_SETTINGS.voiceUri,
   }

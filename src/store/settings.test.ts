@@ -42,6 +42,22 @@ describe('閱讀設定', () => {
 
     expect(loadSettings()).toEqual(DEFAULT_SETTINGS)
   })
+
+  test('預設是分頁模式', () => {
+    expect(loadSettings().scroll).toBe(false)
+  })
+
+  test('記住直式滾動的選擇', () => {
+    saveSettings({ ...DEFAULT_SETTINGS, scroll: true })
+
+    expect(loadSettings().scroll).toBe(true)
+  })
+
+  test('scroll 不是布林值時退回預設', () => {
+    localStorage.setItem('reader:settings', JSON.stringify({ scroll: '是' }))
+
+    expect(loadSettings().scroll).toBe(false)
+  })
 })
 
 describe('朗讀設定', () => {
