@@ -50,6 +50,74 @@ async function tap(page, side) {
   await page.waitForTimeout(450)
 }
 
+/**
+ * 模擬觸控拉曳：在 selector 元素上送出 touchstart，再分好幾段送 touchmove 從 startY 移到 endY。
+ * 刻意不送 touchend，留給呼叫端決定何時放開（拉曳中截圖要用）。
+ * Chromium 的 Touch／TouchEvent 建構子在 hasTouch:true 的 context 下就能用，
+ * 不需要真的走 CDP 的原生輸入管線，足以驗證我們自己的 touchstart/move/end 監聽邏輯。
+ */
+async function touchPullStart(page, selector, startY, endY, steps = 8) {
+  await page.evaluate(
+    ({ selector, startY }) => {
+      const target = document.querySelector(selector)
+      const rect = target.getBoundingClientRect()
+      const x = rect.left + rect.width / 2
+      window.__touchX = x
+      const touch = new Touch({ identifier: 1, target, clientX: x, clientY: startY })
+      target.dispatchEvent(
+        new TouchEvent('touchstart', {
+          touches: [touch],
+          targetTouches: [touch],
+          changedTouches: [touch],
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+    },
+    { selector, startY },
+  )
+  for (let i = 1; i <= steps; i++) {
+    const y = startY + ((endY - startY) * i) / steps
+    await page.evaluate(
+      ({ selector, y }) => {
+        const target = document.querySelector(selector)
+        const touch = new Touch({ identifier: 1, target, clientX: window.__touchX, clientY: y })
+        target.dispatchEvent(
+          new TouchEvent('touchmove', {
+            touches: [touch],
+            targetTouches: [touch],
+            changedTouches: [touch],
+            bubbles: true,
+            cancelable: true,
+          }),
+        )
+      },
+      { selector, y },
+    )
+    await page.waitForTimeout(16)
+  }
+}
+
+/** 放開拉曳：送出 touchend，維持 clientY 在最後拉到的位置。 */
+async function touchPullEnd(page, selector, endY) {
+  await page.evaluate(
+    ({ selector, endY }) => {
+      const target = document.querySelector(selector)
+      const touch = new Touch({ identifier: 1, target, clientX: window.__touchX, clientY: endY })
+      target.dispatchEvent(
+        new TouchEvent('touchend', {
+          touches: [],
+          targetTouches: [],
+          changedTouches: [touch],
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+    },
+    { selector, endY },
+  )
+}
+
 await waitForServer()
 
 const browser = await chromium.launch()
@@ -557,6 +625,74 @@ try {
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   )
   if (overflow > 0) fail(`手機版面有 ${overflow}px 水平溢出`)
+
+  // 拉曳換章：切到直式滾動，並跳到內容夠長的章節才測得出拉曳
+  await phone.click('[aria-label="閱讀設定"]')
+  await phone.waitForSelector('.drawer--right')
+  await phone.click('.setting--row:has-text("直式滾動") input')
+  await phone.keyboard.press('Escape')
+  await phone.waitForSelector('.pager--scroll', { timeout: 5000 })
+  await phone.waitForTimeout(400)
+
+  await phone.click('[aria-label="開啟目錄"]')
+  await phone.waitForSelector('.drawer')
+  await phone.waitForTimeout(300)
+  await (await phone.$$('.toc__item'))[1].click()
+  await phone.waitForSelector('.pager--scroll')
+  await phone.waitForTimeout(500)
+
+  if (await phone.$('.pull-indicator')) fail('沒有拉曳卻出現指示器常駐元素')
+
+  const pullBox = await phone.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    return { scrollHeight: pager.scrollHeight, clientHeight: pager.clientHeight }
+  })
+  if (pullBox.scrollHeight <= pullBox.clientHeight * 2)
+    fail(`手機章節內容不夠長，測不出拉曳換章：${pullBox.scrollHeight} / ${pullBox.clientHeight}`)
+
+  const pullTitle = () => phone.textContent('.topbar__title')
+  const titleBeforePull = await pullTitle()
+  const pullChapterTransform = () =>
+    phone.evaluate(() => getComputedStyle(document.querySelector('.pager--scroll .chapter')).transform)
+
+  const pullBoxRect = await phone.locator('.pager--scroll').boundingBox()
+  const pullStartY = pullBoxRect.y + pullBoxRect.height * 0.7
+
+  // 捲到章尾，準備測試往上拉
+  await phone.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    pager.scrollTop = pager.scrollHeight
+  })
+  await phone.waitForTimeout(500)
+
+  // 案例一：拉不夠（門檻 72px，阻尼 0.4，等於要拉超過 180px 原始位移）就放開，要取消
+  await touchPullStart(phone, '.pager--scroll', pullStartY, pullStartY - 90)
+  await phone.waitForTimeout(80)
+  const draggingTransform = await pullChapterTransform()
+  if (draggingTransform === 'none') fail('拉曳中內容沒有跟著位移')
+  const notArmedYet = await phone.evaluate(() => document.querySelector('.pull-indicator')?.dataset.armed)
+  if (notArmedYet !== 'false') fail(`拉不夠時指示器不應標記為 armed：${notArmedYet}`)
+  await touchPullEnd(phone, '.pager--scroll', pullStartY - 90)
+  await phone.waitForTimeout(400)
+  if ((await pullTitle()) !== titleBeforePull) fail('拉不夠門檻卻換章了')
+  const canceledTransform = await pullChapterTransform()
+  if (canceledTransform !== 'none') fail(`拉不夠取消後位移沒有回到 0：${canceledTransform}`)
+  if (await phone.$('.pull-indicator')) fail('放開取消後指示器沒有消失')
+
+  // 案例二：拉超過門檻，過門檻但還沒放開時截圖，放開要真的換章
+  await touchPullStart(phone, '.pager--scroll', pullStartY, pullStartY - 220)
+  await phone.waitForTimeout(80)
+  const armed = await phone.evaluate(() => document.querySelector('.pull-indicator')?.dataset.armed)
+  if (armed !== 'true') fail(`過門檻時指示器沒有標記為 armed：${armed}`)
+  await phone.screenshot({ path: `${outDir}/24-pull-indicator.png` })
+
+  await touchPullEnd(phone, '.pager--scroll', pullStartY - 220)
+  await phone.waitForTimeout(500)
+  if ((await pullTitle()) === titleBeforePull) fail('拉超過門檻放開卻沒有換章')
+  const pullEnteredTop = await phone.evaluate(() => document.querySelector('.pager--scroll').scrollTop)
+  if (pullEnteredTop > 4) fail(`拉曳換章後沒有停在章首：scrollTop ${pullEnteredTop}`)
+  if (await phone.$('.pull-indicator')) fail('換章後指示器沒有消失')
+
   await phone.close()
 
   // 離線

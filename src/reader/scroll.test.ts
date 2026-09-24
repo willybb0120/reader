@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { atEnd, atStart, clampScrollTop, revealScrollTop, turnScrollTop } from './scroll'
+import { atEnd, atStart, clampScrollTop, pullOffset, revealScrollTop, turnScrollTop } from './scroll'
 
 describe('滾動邊界', () => {
   test('頂端允許兩像素誤差', () => {
@@ -61,5 +61,21 @@ describe('朗讀捲動', () => {
 
   test('句子起始在畫面底部邊緣時仍要捲，否則整句都在畫面外', () => {
     expect(revealScrollTop(1150, 600, 600, 3000)).toBe(950)
+  })
+})
+
+describe('拉曳換章位移', () => {
+  test('套用阻尼：原始位移打折', () => {
+    expect(pullOffset(100, 0.4, 120)).toBe(40)
+    expect(pullOffset(180, 0.4, 120)).toBe(72)
+  })
+
+  test('夾上限，避免拉到畫面外', () => {
+    expect(pullOffset(500, 0.4, 120)).toBe(120)
+  })
+
+  test('反方向（手指往回移動）視為沒有拉曳', () => {
+    expect(pullOffset(-50, 0.4, 120)).toBe(0)
+    expect(pullOffset(0, 0.4, 120)).toBe(0)
   })
 })

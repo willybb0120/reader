@@ -410,6 +410,54 @@ button {
   transition: transform 0.22s cubic-bezier(0.22, 0.8, 0.3, 1);
 }
 
+/* 拉曳換章指示器：只在拉曳中才存在於 DOM，position:fixed 釘住量到的視窗邊緣，
+   不隨內容的 transform 位移一起動。pointer-events:none 不擋選字與點擊 */
+.pull-indicator {
+  position: fixed;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  color: var(--ink-soft);
+  pointer-events: none;
+  opacity: 0;
+  z-index: 5;
+}
+
+.pull-indicator__arrow {
+  transition: transform 0.15s ease;
+}
+
+/* 未達門檻時箭頭指向前進方向：章尾往下、章首往上；達門檻旋轉 180 度變成「放開」 */
+.pull-indicator--end .pull-indicator__arrow {
+  transform: rotate(0deg);
+}
+
+.pull-indicator--end[data-armed='true'] .pull-indicator__arrow {
+  transform: rotate(180deg);
+}
+
+.pull-indicator--start .pull-indicator__arrow {
+  transform: rotate(180deg);
+}
+
+.pull-indicator--start[data-armed='true'] .pull-indicator__arrow {
+  transform: rotate(0deg);
+}
+
+.pull-indicator__label {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  white-space: nowrap;
+}
+
+.pull-indicator[data-armed='true'] .pull-indicator__label {
+  opacity: 1;
+}
+
 /* 分頁版面下，標題與圖片不該被切成兩半 */
 .chapter h1,
 .chapter h2,

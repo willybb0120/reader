@@ -49,3 +49,12 @@ export function revealScrollTop(
   if (sentenceTop >= scrollTop && sentenceTop <= scrollTop + clientHeight * VISIBLE_BAND) return null
   return clampScrollTop(sentenceTop - clientHeight / 3, clientHeight, scrollHeight)
 }
+
+/**
+ * 拉曳換章的位移換算：原始手指位移乘上阻尼，再夾進 [0, max]。
+ * 阻尼讓長距離的拉曳仍有回饋卻不會一下子拉到底；上限避免指示器被拉出畫面。
+ * rawDelta 為負（手指往反方向移動）一律視為沒有拉曳。
+ */
+export function pullOffset(rawDelta: number, damping: number, max: number): number {
+  return Math.min(Math.max(0, rawDelta * damping), max)
+}
