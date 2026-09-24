@@ -6,6 +6,14 @@ interface SelectionToolbarProps {
   /** 取得目前的定位依據：選取用目前的 Range，標註用對應的 <mark> 元素；沒有時回傳 null。 */
   rectOf: () => DOMRect | null
   /**
+   * 量測目標的識別：選取用起訖字元位移組字串，標註用 id。用來判斷「是不是換了新的目標」，
+   * 不能直接拿 rectOf 的物件識別當依據——拖曳選取時 App 端每次 debounce 後都會產生新的
+   * TextSelection 物件，rectOf（依 [active, selection] 建立的 useCallback）的識別也跟著
+   * 每次都變；若拿 rectOf 的識別來重設遲滯方向，拖曳中遲滯帶狀態會一直被清掉，
+   * 門檻附近的抖動又跑回來。
+   */
+  targetKey: string | null
+  /**
    * 任何跟排版有關、可能讓 rectOf 的量測結果整個失效的訊號（例如分頁／滾動模式切換）。
    * SelectionToolbar 本身不會隨 ChapterView 卸載重掛，rectOf 的識別在切換模式時也不會變，
    * 所以光靠 [rectOf] 這個相依偵測不到「該重新量一次」；把訊號傳進來讓它變化時立刻重算一次，
@@ -29,6 +37,7 @@ const COLOR_LABELS: Record<Color, string> = {
 
 export function SelectionToolbar({
   rectOf,
+  targetKey,
   resyncSignal,
   existing,
   onHighlight,
@@ -40,12 +49,19 @@ export function SelectionToolbar({
   // 記住目前浮在上方還是下方，給 computeToolbarPosition 做遲滯判斷，
   // 避免捲動時 rect.top 在 96px 門檻附近來回就一直翻面
   const aboveRef = useRef<boolean | null>(null)
+  // 上一次看到的目標識別，只有它真的變了才重設遲滯方向（見 targetKey 的註解）
+  const targetKeyRef = useRef<string | null>(null)
 
   // 工具列自己追蹤位置，而不是吃呼叫端量到的一次性 rect：捲動與視窗尺寸改變時都要重算，
   // 否則滾動模式下選取的文字一動，工具列就停在原地跟丟了。用 rAF 收斂，不是每個事件都重排。
   useLayoutEffect(() => {
-    // 換了新的量測目標（新選取／新標註）：方向重新判斷，不沿用上一個目標留下的遲滯狀態
-    aboveRef.current = null
+    // 換了新的量測目標（新選取／新標註）：方向重新判斷，不沿用上一個目標留下的遲滯狀態。
+    // 用 targetKey 而不是這個 effect 本身有沒有重跑來判斷，因為 effect 會因為 rectOf／
+    // resyncSignal 改變而重跑，但那不代表目標真的換了（見上面 targetKey 的註解）。
+    if (targetKeyRef.current !== targetKey) {
+      targetKeyRef.current = targetKey
+      aboveRef.current = null
+    }
 
     let frame = 0
     const recompute = () => {
@@ -78,7 +94,7 @@ export function SelectionToolbar({
       document.removeEventListener('scroll', schedule, true)
       window.removeEventListener('resize', schedule)
     }
-  }, [rectOf, resyncSignal])
+  }, [rectOf, resyncSignal, targetKey])
 
   // rect 消失（選取清空、標註被刪）或完全捲出可視範圍時，工具列要隱藏
   if (!position) return null

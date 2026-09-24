@@ -302,6 +302,15 @@ export function App() {
     return null
   }, [active, selection])
 
+  // SelectionToolbar 拿這個判斷「是不是換了新的量測目標」，藉此決定要不要重設上下翻面的
+  // 遲滯記憶；不能讓它用 toolbarRectOf 的物件識別代替，拖曳選取時 selection 每次 debounce
+  // 都是新物件，起訖位移沒變就不該被當成新目標
+  const toolbarTargetKey = active
+    ? `annotation:${active.id}`
+    : selection
+      ? `selection:${selection.start}:${selection.end}`
+      : null
+
   return (
     <div className="app" data-reading={Boolean(reading)}>
       <header className="topbar">
@@ -413,6 +422,7 @@ export function App() {
       {(active || selection) && (
         <SelectionToolbar
           rectOf={toolbarRectOf}
+          targetKey={toolbarTargetKey}
           // 分頁／滾動模式切換時 ChapterView 整個卸載重掛，但 SelectionToolbar 不會跟著重掛、
           // rectOf 的識別也不會變，光靠 rectOf 這個相依偵測不到「該重新量一次」；
           // 把模式當訊號傳進去，讓它變化時立刻重算，不必等到下一次捲動才發現跟丟了
