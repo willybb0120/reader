@@ -57,6 +57,8 @@ export function ScrollChapter({
   const pullDirRef = useRef<'end' | 'start' | null>(null)
   /** 拉曳中的目前位移（像素，阻尼與上限之後的值），touchend 判斷是否達門檻要用 */
   const pullPxRef = useRef(0)
+  /** 回彈動畫結束後要清掉 transition 的 timer id，換章／連續拉曳／卸載時要能取消，不留孤兒 timer */
+  const reboundTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   /** 拉曳方向只用來控制指示器的掛載／卸載；位移本身不經 state，直接寫 DOM 才夠即時 */
   const [pullDir, setPullDir] = useState<'end' | 'start' | null>(null)
   /** 章節純文字長度；只在內容真的變動時整棵樹算一次，捲動收斂回報時直接複用 */
@@ -201,6 +203,10 @@ export function ScrollChapter({
    * 直接歸零即可，否則舊章節的內容會在新章節內容蓋上來之前先滑動一次，畫面會跳。
    */
   const releasePull = useCallback((animate: boolean) => {
+    if (reboundTimerRef.current !== undefined) {
+      clearTimeout(reboundTimerRef.current)
+      reboundTimerRef.current = undefined
+    }
     const content = contentRef.current
     if (content) {
       content.style.transition = animate
@@ -208,8 +214,9 @@ export function ScrollChapter({
         : 'none'
       content.style.transform = ''
       if (animate) {
-        window.setTimeout(() => {
+        reboundTimerRef.current = setTimeout(() => {
           // 動畫跑完就把 transition 清掉，下一次拉曳才不會誤帶動畫
+          reboundTimerRef.current = undefined
           if (contentRef.current === content) content.style.transition = ''
         }, PULL_REBOUND_MS)
       } else {
@@ -219,6 +226,13 @@ export function ScrollChapter({
     pullPxRef.current = 0
     pullDirRef.current = null
     setPullDir(null)
+  }, [])
+
+  // 元件卸載時把回彈 timer 清掉，避免它活得比自己的擁有者還久
+  useEffect(() => {
+    return () => {
+      if (reboundTimerRef.current !== undefined) clearTimeout(reboundTimerRef.current)
+    }
   }, [])
 
   // 指示器掛載後才量測位置：內容拉曳用的是 transform 不是真的 scroll，
@@ -271,7 +285,8 @@ export function ScrollChapter({
 
     const onTouchMove = (event: TouchEvent) => {
       if (touchCrossedRef.current) return
-      const dy = event.touches[0].clientY - startYRef.current
+      const clientY = event.touches[0].clientY
+      let dy = clientY - startYRef.current
 
       if (!pullDirRef.current) {
         const { scrollTop, clientHeight, scrollHeight } = viewport
@@ -283,6 +298,10 @@ export function ScrollChapter({
         if (Date.now() - crossedAtRef.current < EDGE_COOLDOWN_MS) return
         pullDirRef.current = wantEnd ? 'end' : 'start'
         setPullDir(pullDirRef.current)
+        // 位移要從「進入拉曳」這一刻重新起算，不能沿用手指按下到現在的整段距離——
+        // 否則一路滑到底再繼續拉的正常手勢，第一幀就會被當成已經拉了一大段
+        startYRef.current = clientY
+        dy = 0
       }
 
       // 進入拉曳後要接管位移，才能讓內容跟著手指走；不在拉曳中的 touchmove 完全不擋，
@@ -317,6 +336,10 @@ export function ScrollChapter({
       viewport.removeEventListener('touchmove', onTouchMove)
       viewport.removeEventListener('touchend', onTouchEnd)
       viewport.removeEventListener('touchcancel', onTouchEnd)
+      // 防護：如果 effect 重新註冊（deps 變了）或元件卸載時手指還按著，
+      // 換章可能是透過別的路徑發生（例如點了目錄），沒人會再收到這次的 touchend，
+      // 把拉曳狀態與位移強制歸零，不留孤兒的 transform
+      if (pullDirRef.current) releasePull(false)
     }
   }, [onPastEnd, onPastStart, applyPull, releasePull])
 

@@ -693,6 +693,100 @@ try {
   if (pullEnteredTop > 4) fail(`拉曳換章後沒有停在章首：scrollTop ${pullEnteredTop}`)
   if (await phone.$('.pull-indicator')) fail('換章後指示器沒有消失')
 
+  // 案例三（回歸）：從章節中段開始，單一次連續向上滑動——先自然捲到底，
+  // 手指不放繼續往上拉一小段（遠低於門檻）。拉曳的位移必須從「進入拉曳」那一刻重新起算，
+  // 不能沿用「手指按下到現在」的整段距離，否則這個最自然的換章手勢會在進入拉曳的第一幀
+  // 就被誤判成已經拉超過門檻。
+  // 案例一、二已經各換過一次章，目前所在的章節不保證夠長，回到目錄的第 1 項重新取一個長章節
+  await phone.click('[aria-label="開啟目錄"]')
+  await phone.waitForSelector('.drawer')
+  await phone.waitForTimeout(300)
+  await (await phone.$$('.toc__item'))[1].click()
+  await phone.waitForSelector('.pager--scroll')
+  await phone.waitForTimeout(500)
+  await phone.evaluate(() => {
+    document.querySelector('.pager--scroll').scrollTop = 0
+  })
+  await phone.waitForTimeout(300)
+  const continuousBox = await phone.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    return { scrollHeight: pager.scrollHeight, clientHeight: pager.clientHeight }
+  })
+  // 挑一個離章尾 220px 的起點：模擬一次自然的連續滑動捲到底，
+  // 又足以跟「到底之後只多拉 40px」（遠低於 180px 的門檻原始位移）明確區分開
+  const distanceToEnd = 220
+  const extraPastEdge = 40
+  const startScrollTop = continuousBox.scrollHeight - continuousBox.clientHeight - distanceToEnd
+  if (startScrollTop <= 0)
+    fail(`章節不夠長，測不出案例三的連續滑動情境：${continuousBox.scrollHeight}`)
+  await phone.evaluate((top) => {
+    document.querySelector('.pager--scroll').scrollTop = top
+  }, startScrollTop)
+  await phone.waitForTimeout(300)
+
+  const continuousTitleBefore = await pullTitle()
+  const swipeStartY = pullBoxRect.y + pullBoxRect.height * 0.9
+  const totalDy = distanceToEnd + extraPastEdge
+  const swipeSteps = 26
+
+  await phone.evaluate(
+    ({ startY }) => {
+      const target = document.querySelector('.pager--scroll')
+      const rect = target.getBoundingClientRect()
+      window.__touchX = rect.left + rect.width / 2
+      const touch = new Touch({ identifier: 1, target, clientX: window.__touchX, clientY: startY })
+      target.dispatchEvent(
+        new TouchEvent('touchstart', {
+          touches: [touch],
+          targetTouches: [touch],
+          changedTouches: [touch],
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+    },
+    { startY: swipeStartY },
+  )
+  for (let i = 1; i <= swipeSteps; i++) {
+    const cumulativeDy = (totalDy * i) / swipeSteps
+    const clientY = swipeStartY - cumulativeDy
+    await phone.evaluate(
+      ({ cumulativeDy, distanceToEnd, startScrollTop, clientY }) => {
+        const pager = document.querySelector('.pager--scroll')
+        // 模擬原生捲動接手這段位移：還沒到底之前，手指移動先被拿去捲內容，
+        // 到底之後 scrollTop 就不再推進（我們自己的 handler 接管，preventDefault）
+        pager.scrollTop = Math.min(startScrollTop + cumulativeDy, startScrollTop + distanceToEnd)
+        const touch = new Touch({ identifier: 1, target: pager, clientX: window.__touchX, clientY })
+        pager.dispatchEvent(
+          new TouchEvent('touchmove', {
+            touches: [touch],
+            targetTouches: [touch],
+            changedTouches: [touch],
+            bubbles: true,
+            cancelable: true,
+          }),
+        )
+      },
+      { cumulativeDy, distanceToEnd, startScrollTop, clientY },
+    )
+    await phone.waitForTimeout(16)
+  }
+
+  const continuousArmed = await phone.evaluate(
+    () => document.querySelector('.pull-indicator')?.dataset.armed,
+  )
+  if (continuousArmed !== 'false')
+    fail(
+      `連續滑動捲到底、再多拉 ${extraPastEdge}px（遠低於門檻）就被判定成 armed=${continuousArmed}：` +
+        `拉曳位移沒有從進入拉曳那一刻重新起算，沿用了手指按下到現在的整段距離`,
+    )
+
+  await touchPullEnd(phone, '.pager--scroll', swipeStartY - totalDy)
+  await phone.waitForTimeout(400)
+  if ((await pullTitle()) !== continuousTitleBefore)
+    fail('連續滑動捲到底再多拉一點（未達門檻）卻換章了')
+  if (await phone.$('.pull-indicator')) fail('案例三放開後指示器沒有消失')
+
   await phone.close()
 
   // 離線
