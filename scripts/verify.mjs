@@ -787,6 +787,125 @@ try {
     fail('連續滑動捲到底再多拉一點（未達門檻）卻換章了')
   if (await phone.$('.pull-indicator')) fail('案例三放開後指示器沒有消失')
 
+  // 手機劃線／筆記：headless Chromium 不支援原生長按選字（已實測），
+  // 這三條只驗事件驅動與定位跟隨的部分，用 Range API 建立選取，不模擬長按手勢。
+  await phone.click('[aria-label="開啟目錄"]')
+  await phone.waitForSelector('.drawer')
+  await phone.waitForTimeout(300)
+  ;(await phone.$$('.toc__item'))[1].click()
+  await phone.waitForSelector('.pager--scroll')
+  await phone.waitForTimeout(500)
+
+  // 斷言一：不靠 touchend/mouseup/pointerup，選字後 debounce 過了工具列也要出現
+  // （根因 1：手機原生選字不保證送出 mouseup/touchend，只能靠 selectionchange 驅動）
+  const selectedWithoutEvent = await phone.evaluate(() => {
+    const p = [...document.querySelectorAll('.chapter p')].find(
+      (el) => (el.textContent ?? '').trim().length > 20,
+    )
+    if (!p) return false
+    const range = document.createRange()
+    range.selectNodeContents(p)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    return true
+  })
+  if (!selectedWithoutEvent) fail('找不到可用於選字測試的段落')
+  await phone.waitForTimeout(400) // 180ms debounce + 緩衝
+  if (!(await phone.$('.selection-toolbar')))
+    fail('不派送 touchend/mouseup/pointerup，選取後工具列沒有出現')
+
+  await phone.evaluate(() => window.getSelection().removeAllRanges())
+  await phone.waitForTimeout(400)
+
+  // 斷言二、三共用的量測環境：捲到章首，在目前視窗中段挑一個段落選取
+  // （根因 2：工具列原本吃一次性 rect，捲動後不跟著文字走）
+  const geometry = await phone.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    pager.scrollTop = 0
+    return { clientHeight: pager.clientHeight, scrollHeight: pager.scrollHeight }
+  })
+  if (geometry.scrollHeight - geometry.clientHeight < geometry.clientHeight * 2 + 400)
+    fail(`章節內容不夠長，測不出工具列跟隨捲動：可捲動距離 ${geometry.scrollHeight - geometry.clientHeight}`)
+
+  // 挑選段落時的捲動測試量，與下面實際捲動的量要一致
+  const SCROLL_STEP = 300
+  // 段落起始位置要夠低：捲動 300px 後仍要離視窗頂端超過 96px（SelectionToolbar 的
+  // above/below 切換門檻），否則工具列會因為換邊而跳動，干擾「線性跟隨」本身的量測
+  const minTopBeforeScroll = 96 + SCROLL_STEP + 40
+  const picked = await phone.evaluate(
+    ({ clientHeight, minTop }) => {
+      const pager = document.querySelector('.pager--scroll')
+      const target = [...pager.querySelectorAll('.chapter p')].find((el) => {
+        const rect = el.getBoundingClientRect()
+        return (el.textContent ?? '').trim().length > 20 && rect.top > minTop && rect.top < clientHeight - 40
+      })
+      if (!target) return false
+      const range = document.createRange()
+      range.selectNodeContents(target)
+      const selection = window.getSelection()
+      selection.removeAllRanges()
+      selection.addRange(range)
+      return true
+    },
+    { clientHeight: geometry.clientHeight, minTop: minTopBeforeScroll },
+  )
+  if (!picked) fail('找不到適合測試工具列跟隨捲動的段落')
+  await phone.waitForTimeout(400)
+
+  const readToolbar = () =>
+    phone.evaluate(() => {
+      const toolbar = document.querySelector('.selection-toolbar')
+      const selection = window.getSelection()
+      return {
+        toolbarTop: toolbar ? parseFloat(toolbar.style.top) : null,
+        textTop: selection.rangeCount ? selection.getRangeAt(0).getBoundingClientRect().top : null,
+      }
+    })
+
+  const beforeScroll = await readToolbar()
+  if (beforeScroll.toolbarTop === null) fail('選取後工具列沒有出現，測不出斷言二')
+
+  // 斷言二：捲動 300px，工具列的 top 位移量要與文字的位移量相符（容許小誤差），而不是停在原地
+  await phone.evaluate((step) => {
+    document.querySelector('.pager--scroll').scrollTop += step
+  }, SCROLL_STEP)
+  await phone.waitForTimeout(200) // 等 rAF 收斂
+  const afterScroll = await readToolbar()
+  if (afterScroll.toolbarTop === null) fail('捲動 300px 後工具列消失，文字應該還在可視範圍內')
+  const toolbarDelta = beforeScroll.toolbarTop - afterScroll.toolbarTop
+  const textDelta = beforeScroll.textTop - afterScroll.textTop
+  if (Math.abs(toolbarDelta - textDelta) > 8)
+    fail(`工具列沒有跟著文字位移：文字位移 ${textDelta.toFixed(1)}px，工具列位移 ${toolbarDelta.toFixed(1)}px`)
+
+  // 斷言三：繼續捲到選取的文字完全離開可視範圍，工具列必須消失
+  await phone.evaluate((clientHeight) => {
+    document.querySelector('.pager--scroll').scrollTop += clientHeight * 2
+  }, geometry.clientHeight)
+  await phone.waitForTimeout(200)
+  if (await phone.$('.selection-toolbar')) fail('文字捲出可視範圍後工具列沒有消失')
+  await phone.evaluate(() => window.getSelection().removeAllRanges())
+
+  // 重新選一次字，拍工具列與選取範圍同框的截圖
+  await phone.evaluate(() => {
+    document.querySelector('.pager--scroll').scrollTop = 0
+  })
+  await phone.waitForTimeout(300)
+  await phone.evaluate(() => {
+    const p = [...document.querySelectorAll('.chapter p')].find(
+      (el) => (el.textContent ?? '').trim().length > 30,
+    )
+    const range = document.createRange()
+    range.selectNodeContents(p)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+  })
+  await phone.waitForSelector('.selection-toolbar')
+  await phone.waitForTimeout(200)
+  await phone.screenshot({ path: `${outDir}/25-mobile-selection.png` })
+  await phone.evaluate(() => window.getSelection().removeAllRanges())
+
   await phone.close()
 
   // 離線
