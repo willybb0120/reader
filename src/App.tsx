@@ -47,7 +47,7 @@ export function App() {
 
   const [panel, setPanel] = useState<Panel>(null)
   const [selection, setSelection] = useState<TextSelection | null>(null)
-  const [active, setActive] = useState<{ id: string; rect: DOMRect } | null>(null)
+  const [active, setActive] = useState<{ id: string } | null>(null)
   const [editingNote, setEditingNote] = useState<Annotation | null>(null)
   const [highlightRange, setHighlightRange] = useState<{ start: number; end: number } | undefined>()
   const [helpOpen, setHelpOpen] = useState(false)
@@ -204,9 +204,9 @@ export function App() {
     if (next) setActive(null)
   }, [])
 
-  const onAnnotationClick = useCallback((id: string, rect: DOMRect) => {
+  const onAnnotationClick = useCallback((id: string) => {
     setSelection(null)
-    setActive({ id, rect })
+    setActive({ id })
   }, [])
 
   const onPastEnd = useCallback(() => {
@@ -281,7 +281,21 @@ export function App() {
     jump(annotation.chapterIndex, { kind: 'annotation', id: annotation.id })
 
   const reading = status === 'ready' && book && chapter
-  const toolbarRect = active?.rect ?? selection?.rect
+
+  // 工具列自己重算位置，這裡只提供「目前」的量測依據：選取用目前的 Range，標註用對應的 <mark> 元素。
+  // active／selection 只有其中一個會存在，依目前用哪個決定量哪個目標。
+  const toolbarRectOf = useCallback((): DOMRect | null => {
+    if (active) {
+      const mark = document.querySelector<HTMLElement>(`mark[data-annotation="${CSS.escape(active.id)}"]`)
+      return mark?.getBoundingClientRect() ?? null
+    }
+    if (selection) {
+      const sel = window.getSelection()
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null
+      return sel.getRangeAt(0).getBoundingClientRect()
+    }
+    return null
+  }, [active, selection])
 
   return (
     <div className="app" data-reading={Boolean(reading)}>
@@ -391,9 +405,9 @@ export function App() {
         </main>
       )}
 
-      {toolbarRect && (
+      {(active || selection) && (
         <SelectionToolbar
-          rect={toolbarRect}
+          rectOf={toolbarRectOf}
           existing={activeAnnotation}
           onHighlight={highlight}
           onNote={openNote}

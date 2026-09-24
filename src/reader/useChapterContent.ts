@@ -4,6 +4,12 @@ import type { Annotation } from '../store/annotations'
 import type { TextSelection } from './chapterTypes'
 import { getTextOffsets, wrapRange } from './textRange'
 
+/**
+ * selectionchange 的 debounce 間隔。拖曳選取控點時每個微小變動都會觸發 selectionchange，
+ * 不 debounce 會每次都重算文字位移；180ms 短到使用者感覺不出延遲，又足以吃掉拖曳中的抖動。
+ */
+const SELECTION_DEBOUNCE_MS = 180
+
 export interface ChapterContentOptions {
   contentRef: React.RefObject<HTMLElement | null>
   chapter: Chapter
@@ -12,7 +18,7 @@ export interface ChapterContentOptions {
   speakingRange?: { start: number; end: number }
   onSelect: (selection: TextSelection | null) => void
   onNavigate: (chapterIndex: number, fragment?: string) => void
-  onAnnotationClick: (id: string, rect: DOMRect) => void
+  onAnnotationClick: (id: string) => void
 }
 
 /**
@@ -84,7 +90,7 @@ export function useChapterContent({
       const mark = target.closest<HTMLElement>('mark[data-annotation]')
       if (mark) {
         event.stopPropagation()
-        onAnnotationClick(mark.dataset.annotation!, mark.getBoundingClientRect())
+        onAnnotationClick(mark.dataset.annotation!)
       }
     }
 
@@ -92,12 +98,18 @@ export function useChapterContent({
     return () => content.removeEventListener('click', onClick)
   }, [contentRef, onNavigate, onAnnotationClick])
 
-  // 選取文字後浮出標註工具列
+  // 選取文字後浮出標註工具列。
+  // 手機原生選字不保證送出 mouseup/touchend（長按由瀏覽器接管手勢，拖曳選取控點是原生 UI），
+  // 所以改以 selectionchange 為主，涵蓋所有選取變化的路徑；pointerup 只用來讓滑鼠／點按放開時
+  // 立即評估一次，不必等 debounce，維持桌機的即時手感。
   useEffect(() => {
     const content = contentRef.current
     if (!content) return
 
-    const onSelectionEnd = () => {
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined
+
+    const evaluate = () => {
+      debounceTimer = undefined
       const selection = window.getSelection()
       if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
         onSelect(null)
@@ -110,14 +122,30 @@ export function useChapterContent({
         return
       }
       const { start, end } = getTextOffsets(content, range)
-      onSelect({ start, end, text, rect: range.getBoundingClientRect() })
+      onSelect({ start, end, text })
     }
 
-    document.addEventListener('mouseup', onSelectionEnd)
-    document.addEventListener('touchend', onSelectionEnd)
+    const onSelectionChange = () => {
+      clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(evaluate, SELECTION_DEBOUNCE_MS)
+    }
+
+    // 指標放開時立即評估一次，不等 debounce：桌機滑鼠選字才不會有延遲感
+    const onPointerUp = () => {
+      clearTimeout(debounceTimer)
+      evaluate()
+    }
+
+    document.addEventListener('selectionchange', onSelectionChange)
+    document.addEventListener('pointerup', onPointerUp)
+    // iOS 長按選字手勢被系統取消時常送 touchcancel 而非 touchend；
+    // selectionchange 理論上已涵蓋最終狀態，這裡補上是為了同樣立即評估，不留延遲
+    document.addEventListener('touchcancel', onPointerUp)
     return () => {
-      document.removeEventListener('mouseup', onSelectionEnd)
-      document.removeEventListener('touchend', onSelectionEnd)
+      clearTimeout(debounceTimer)
+      document.removeEventListener('selectionchange', onSelectionChange)
+      document.removeEventListener('pointerup', onPointerUp)
+      document.removeEventListener('touchcancel', onPointerUp)
     }
   }, [contentRef, onSelect])
 }
