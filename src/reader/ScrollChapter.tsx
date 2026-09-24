@@ -163,7 +163,15 @@ export function ScrollChapter({
 
     const observer = new ResizeObserver(() => {
       const offset = charOffsetAtScrollTop(content, viewport.scrollTop)
-      guard.begin()
+      const target = clampScrollTop(
+        scrollTopForCharOffset(content, offset),
+        viewport.clientHeight,
+        viewport.scrollHeight,
+      )
+      // 重排後算出的位置跟現在幾乎一樣就不開旗標：零位移的 scrollTop 寫入不會發出
+      // scroll／scrollend，旗標會一路卡到 1200ms 逾時，期間使用者捲動不會重新定位朗讀。
+      // 跟 scrollProgrammatically 用的是同一道零位移護欄。
+      if (Math.abs(target - viewport.scrollTop) >= 1) guard.begin()
       settle({ kind: 'offset', offset })
     })
     observer.observe(viewport)
