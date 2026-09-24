@@ -818,73 +818,267 @@ try {
   await phone.evaluate(() => window.getSelection().removeAllRanges())
   await phone.waitForTimeout(400)
 
-  // 斷言二、三共用的量測環境：捲到章首，在目前視窗中段挑一個段落選取
-  // （根因 2：工具列原本吃一次性 rect，捲動後不跟著文字走）
+  // 斷言二（fix round 1 / Finding 1）：分頁模式選字、工具列開著時切到滾動模式。
+  // 整個 ChapterView 會卸載重掛，原本的選取範圍因此失效；舊版的 bug 是 SelectionToolbar
+  // 查一次 .pager--scroll 存起來，模式切換時這個 effect 不會重跑，工具列會凍結在切換前的
+  // 位置動也不動（幽靈工具列），而不是發現量測目標已經失效就消失。
+  await phone.click('[aria-label="閱讀設定"]')
+  await phone.waitForSelector('.drawer--right')
+  await phone.click('.setting--row:has-text("直式滾動") input') // 先切回分頁模式
+  await phone.keyboard.press('Escape')
+  await phone.waitForTimeout(500)
+  if (await phone.$('.pager--scroll')) fail('切回分頁模式失敗，測不出 Finding 1 的重現步驟')
+
+  const pickedForModeSwitch = await phone.evaluate(() => {
+    const p = [...document.querySelectorAll('.chapter p')].find((el) => (el.textContent ?? '').trim().length > 20)
+    if (!p) return false
+    const range = document.createRange()
+    range.selectNodeContents(p)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    return true
+  })
+  if (!pickedForModeSwitch) fail('找不到可用於 Finding 1 測試的段落')
+  await phone.waitForTimeout(400)
+  if (!(await phone.$('.selection-toolbar'))) fail('分頁模式選字後工具列沒有出現，測不出 Finding 1')
+
+  await phone.click('[aria-label="閱讀設定"]')
+  await phone.waitForSelector('.drawer--right')
+  await phone.click('.setting--row:has-text("直式滾動") input') // 切回滾動模式
+  await phone.keyboard.press('Escape')
+  await phone.waitForSelector('.pager--scroll', { timeout: 5000 })
+  await phone.waitForTimeout(400)
+  if (await phone.$('.selection-toolbar'))
+    fail(
+      '切換模式後工具列仍顯示在切換前的位置（Finding 1：SelectionToolbar 沒有立刻重新量測，' +
+        '凍結成幽靈工具列，選取早已因為內容重新掛載而失效）',
+    )
+
+  // 斷言三、四共用的量測環境：捲到章首，準備測試工具列跟隨捲動與上下翻面遲滯（Finding 3）
   const geometry = await phone.evaluate(() => {
     const pager = document.querySelector('.pager--scroll')
     pager.scrollTop = 0
     return { clientHeight: pager.clientHeight, scrollHeight: pager.scrollHeight }
   })
-  if (geometry.scrollHeight - geometry.clientHeight < geometry.clientHeight * 2 + 400)
-    fail(`章節內容不夠長，測不出工具列跟隨捲動：可捲動距離 ${geometry.scrollHeight - geometry.clientHeight}`)
-
-  // 挑選段落時的捲動測試量，與下面實際捲動的量要一致
-  const SCROLL_STEP = 300
-  // 段落起始位置要夠低：捲動 300px 後仍要離視窗頂端超過 96px（SelectionToolbar 的
-  // above/below 切換門檻），否則工具列會因為換邊而跳動，干擾「線性跟隨」本身的量測
-  const minTopBeforeScroll = 96 + SCROLL_STEP + 40
-  const picked = await phone.evaluate(
-    ({ clientHeight, minTop }) => {
-      const pager = document.querySelector('.pager--scroll')
-      const target = [...pager.querySelectorAll('.chapter p')].find((el) => {
-        const rect = el.getBoundingClientRect()
-        return (el.textContent ?? '').trim().length > 20 && rect.top > minTop && rect.top < clientHeight - 40
-      })
-      if (!target) return false
-      const range = document.createRange()
-      range.selectNodeContents(target)
-      const selection = window.getSelection()
-      selection.removeAllRanges()
-      selection.addRange(range)
-      return true
-    },
-    { clientHeight: geometry.clientHeight, minTop: minTopBeforeScroll },
-  )
-  if (!picked) fail('找不到適合測試工具列跟隨捲動的段落')
+  // 章節開頭（標題、插圖）通常沒有夠長的段落可選，先挑一個明顯在遲滯帶上緣（96+24=120）之上、
+  // 目前看得到的段落，再依它實際的 top 動態算出要捲幾步，而不是先猜一個固定範圍去配段落
+  // ——固定範圍很容易跟這本書實際的段落位置對不上，配不到就整條斷言失效。
+  const pickedTop = await phone.evaluate((clientHeight) => {
+    const pager = document.querySelector('.pager--scroll')
+    const target = [...pager.querySelectorAll('.chapter p')].find((el) => {
+      const rect = el.getBoundingClientRect()
+      return (el.textContent ?? '').trim().length > 20 && rect.top > 150 && rect.top < clientHeight - 40
+    })
+    if (!target) return null
+    const range = document.createRange()
+    range.selectNodeContents(target)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    return range.getBoundingClientRect().top
+  }, geometry.clientHeight)
+  if (pickedTop === null) fail('找不到適合測試工具列跟隨捲動與翻面的段落')
   await phone.waitForTimeout(400)
 
-  const readToolbar = () =>
-    phone.evaluate(() => {
+  // 動態算出捲動步數：終點落在遲滯帶下緣（96-24=72）以下（保證真的翻面），
+  // 同時留在 top=40 附近收尾（保證還沒完全捲出可視範圍，不會提早觸發斷言五的隱藏）
+  const WALK_STEP = 25
+  const WALK_STEPS = Math.max(1, Math.ceil((pickedTop - 40) / WALK_STEP))
+  if (geometry.scrollHeight - geometry.clientHeight < WALK_STEP * WALK_STEPS + geometry.clientHeight * 2 + 200)
+    fail(`章節內容不夠長，測不出工具列跟隨捲動：可捲動距離 ${geometry.scrollHeight - geometry.clientHeight}`)
+
+  // 斷言三＋四：分好幾小步捲動、每步都讀一次工具列與文字的 top。
+  // 只要連續兩步都在同一側（沒有翻面）且都沒有被上下邊界夾住，工具列的位移量就該跟文字的
+  // 位移量相符（線性跟隨）；整個走位過程中翻面次數不可以超過一次，也一定要至少翻一次，
+  // 否則代表測試場景沒有真的穿越門檻區間，測不出遲滯帶的效果。
+  //
+  // 「都沒有被夾住」的但書是必要的：toolbarPosition.ts 的 TOP_MARGIN（96）同時是「够不够格浮在
+  // 上方」的判斷門檻，也是浮在上方時 top 的夾住下限。遲滯帶讓「已經在上方」的狀態一路維持到
+  // rect.top 掉到 72，但夾住下限仍然是 96，所以 rect.top 在 72～108 這段會被夾住在 96 動彈不得
+  // ——這是既有夾住邏輯的合理結果（工具列本來就不該比 96 更貼近視窗頂端），不是新的 bug，
+  // 只是遲滯帶讓「即將翻面前會被夾住一小段」這件事第一次變得看得到。跳過被夾住的樣本，
+  // 不影響本測試真正要守住的兩件事：翻面次數與捲出畫面要隱藏。
+  const side = (transform) => (transform.includes('-100%') ? 'above' : 'below')
+  const CLAMP_BOUNDS = [96, 60] // TOP_MARGIN、BOTTOM_MARGIN，與 toolbarPosition.ts 保持一致
+  const isClamped = (top) => CLAMP_BOUNDS.some((bound) => Math.abs(top - bound) < 1)
+  let flips = 0
+  let prevSide = null
+  let prevToolbarTop = null
+  let prevTextTop = null
+  for (let i = 0; i <= WALK_STEPS; i++) {
+    if (i > 0) {
+      await phone.evaluate((step) => {
+        document.querySelector('.pager--scroll').scrollTop += step
+      }, WALK_STEP)
+      await phone.waitForTimeout(60) // 步進較小，rAF 很快收斂
+    }
+    const sample = await phone.evaluate(() => {
       const toolbar = document.querySelector('.selection-toolbar')
       const selection = window.getSelection()
+      if (!toolbar || !selection.rangeCount) return null
       return {
-        toolbarTop: toolbar ? parseFloat(toolbar.style.top) : null,
-        textTop: selection.rangeCount ? selection.getRangeAt(0).getBoundingClientRect().top : null,
+        top: parseFloat(toolbar.style.top),
+        transform: toolbar.style.transform,
+        textTop: selection.getRangeAt(0).getBoundingClientRect().top,
       }
     })
+    if (!sample) fail(`捲動第 ${i} 步時工具列消失，測不出斷言三／四`)
+    const currentSide = side(sample.transform)
+    if (prevSide !== null) {
+      if (currentSide !== prevSide) {
+        flips++
+      } else if (!isClamped(sample.top) && !isClamped(prevToolbarTop)) {
+        const toolbarDelta = prevToolbarTop - sample.top
+        const textDelta = prevTextTop - sample.textTop
+        if (Math.abs(toolbarDelta - textDelta) > 4)
+          fail(
+            `第 ${i} 步工具列沒有線性跟隨文字：文字位移 ${textDelta.toFixed(1)}px，` +
+              `工具列位移 ${toolbarDelta.toFixed(1)}px`,
+          )
+      }
+    }
+    prevSide = currentSide
+    prevToolbarTop = sample.top
+    prevTextTop = sample.textTop
+  }
+  if (flips > 1) fail(`捲動經過上下切換門檻時翻了 ${flips} 次，應該最多一次（Finding 3：遲滯帶沒有生效）`)
+  if (flips === 0) fail('這次捲動應該要經過上下切換門檻卻完全沒有翻面，測試場景設計有誤，測不出 Finding 3 的修正')
 
-  const beforeScroll = await readToolbar()
-  if (beforeScroll.toolbarTop === null) fail('選取後工具列沒有出現，測不出斷言二')
-
-  // 斷言二：捲動 300px，工具列的 top 位移量要與文字的位移量相符（容許小誤差），而不是停在原地
-  await phone.evaluate((step) => {
-    document.querySelector('.pager--scroll').scrollTop += step
-  }, SCROLL_STEP)
-  await phone.waitForTimeout(200) // 等 rAF 收斂
-  const afterScroll = await readToolbar()
-  if (afterScroll.toolbarTop === null) fail('捲動 300px 後工具列消失，文字應該還在可視範圍內')
-  const toolbarDelta = beforeScroll.toolbarTop - afterScroll.toolbarTop
-  const textDelta = beforeScroll.textTop - afterScroll.textTop
-  if (Math.abs(toolbarDelta - textDelta) > 8)
-    fail(`工具列沒有跟著文字位移：文字位移 ${textDelta.toFixed(1)}px，工具列位移 ${toolbarDelta.toFixed(1)}px`)
-
-  // 斷言三：繼續捲到選取的文字完全離開可視範圍，工具列必須消失
+  // 斷言五：繼續捲到選取的文字完全離開可視範圍，工具列必須消失
   await phone.evaluate((clientHeight) => {
     document.querySelector('.pager--scroll').scrollTop += clientHeight * 2
   }, geometry.clientHeight)
   await phone.waitForTimeout(200)
   if (await phone.$('.selection-toolbar')) fail('文字捲出可視範圍後工具列沒有消失')
   await phone.evaluate(() => window.getSelection().removeAllRanges())
+
+  // 斷言六（fix round 1 / Finding 2）：跨段落標註（同一個 id 對應多個 <mark> 片段）要挑目前
+  // 看得到的那個片段來定位，而不是永遠挑文件順序的第一個。做法：選兩個段落、劃線建立標註，
+  // 捲到只看得到第二個片段的位置，點它，工具列應該要出現在第二個片段附近。
+  await phone.evaluate(() => {
+    document.querySelector('.pager--scroll').scrollTop = 0
+  })
+  await phone.waitForTimeout(300)
+  // 選第一個段落與「明顯超過一個視窗高度之後」的段落，確保捲到第二個片段時，
+  // 第一個片段一定已經不在可視範圍內（避免兩段剛好靠很近，怎麼捲都同時看得到，測不出問題）
+  const spanned = await phone.evaluate((clientHeight) => {
+    const paragraphs = [...document.querySelectorAll('.chapter p')].filter(
+      (el) => (el.textContent ?? '').trim().length > 15,
+    )
+    if (paragraphs.length < 2) return null
+    const first = paragraphs[0]
+    const firstTop = first.getBoundingClientRect().top
+    const second = paragraphs.find(
+      (el) => el !== first && el.getBoundingClientRect().top > firstTop + clientHeight + 100,
+    )
+    if (!second) return null
+    const range = document.createRange()
+    range.setStart(first, 0)
+    range.setEnd(second, second.childNodes.length)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    return true
+  }, geometry.clientHeight)
+  if (!spanned) fail('找不到相隔夠遠的兩個段落，測不出跨段落標註（Finding 2）')
+  await phone.waitForSelector('.selection-toolbar')
+  await phone.click('[aria-label="綠色劃線"]')
+  await phone.waitForTimeout(300)
+  const fragmentCount = (await phone.$$('mark[data-annotation]')).length
+  if (fragmentCount < 2) fail(`跨段落標註沒有產生多個片段：${fragmentCount}`)
+
+  // 捲到只有「最後一個片段」還在可視範圍內
+  const scrolledToLastFragment = await phone.evaluate(() => {
+    const pager = document.querySelector('.pager--scroll')
+    const marks = [...document.querySelectorAll('mark[data-annotation]')]
+    const last = marks.at(-1)
+    if (!last) return null
+    const id = last.dataset.annotation
+    last.scrollIntoView({ block: 'center' })
+    return id
+  })
+  if (!scrolledToLastFragment) fail('找不到跨段落標註的片段，測不出 Finding 2')
+  await phone.waitForTimeout(300)
+
+  const clickResult = await phone.evaluate((id) => {
+    const pager = document.querySelector('.pager--scroll')
+    const viewport = pager.getBoundingClientRect()
+    const marks = [...document.querySelectorAll(`mark[data-annotation="${id}"]`)]
+    const firstFragmentRect = marks[0].getBoundingClientRect()
+    const visible = marks.find((m) => {
+      const r = m.getBoundingClientRect()
+      return r.bottom >= viewport.top && r.top <= viewport.bottom
+    })
+    if (!visible) return null
+    // 舊版永遠選第一個片段；先確認第一個片段這次真的已經捲出畫面，
+    // 否則這個場景沒有測到問題，跟原本一樣沒有鑑別力
+    const firstFragmentOutOfView =
+      firstFragmentRect.bottom < viewport.top || firstFragmentRect.top > viewport.bottom
+    visible.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    return { firstFragmentOutOfView, visibleTop: visible.getBoundingClientRect().top }
+  }, scrolledToLastFragment)
+  if (!clickResult) fail('點擊跨段落標註的可見片段失敗')
+  if (!clickResult.firstFragmentOutOfView)
+    fail('測試場景設計有誤：第一個片段還在畫面內，測不出「永遠選第一個片段」的問題')
+
+  await phone.waitForTimeout(200)
+  const toolbarAfterFragmentClick = await phone.$('.selection-toolbar')
+  if (!toolbarAfterFragmentClick)
+    fail(
+      '點擊跨段落標註中看得到的片段，工具列沒有出現' +
+        '（Finding 2：rectOf 只查第一個片段，該片段已捲出畫面導致 isFullyOutOfView 誤判）',
+    )
+  const toolbarTopAfterFragmentClick = await phone.evaluate(() =>
+    parseFloat(document.querySelector('.selection-toolbar').style.top),
+  )
+  // 工具列應該貼著「看得到的那個片段」，不是遠在畫面外的第一個片段
+  if (Math.abs(toolbarTopAfterFragmentClick - clickResult.visibleTop) > 200)
+    fail(
+      `工具列位置跟看得到的片段對不上：片段 top ${clickResult.visibleTop.toFixed(1)}px，` +
+        `工具列 top ${toolbarTopAfterFragmentClick.toFixed(1)}px`,
+    )
+
+  // 點色塊乾淨關掉這次的 active 工具列（會清掉 active／selection 兩個 state）；
+  // 按 Escape 不會清，若留著沒關，下面新選取出現前 waitForSelector 會直接抓到這個舊的、
+  // 造成後面誤判成還在跟這個標註互動。不用「複製」是因為 headless 環境沒有剪貼簿權限，
+  // 點了會噴 console error 被最後的 console 錯誤檢查攔下來，干擾到這條測試以外的東西。
+  await phone.click('[aria-label="黃色劃線"]')
+  await phone.waitForTimeout(200)
+  if (await phone.$('.selection-toolbar')) fail('點色塊後工具列沒有關閉，測不出斷言七的前置條件')
+
+  // 斷言七：改成 selectionchange 驅動之後，在筆記對話框的 textarea 裡選字不該誤觸發工具列
+  // （表單元素的選取由自己的 selectionStart/End 管，不會經過 document 的 Selection）
+  // 先捲回章首：上面 Finding 2 的測試用 scrollIntoView 捲動過，段落若還在畫面外，
+  // 工具列會依照「完全捲出可視範圍就隱藏」的正確行為不出現，測不出這條要驗的東西
+  await phone.evaluate(() => {
+    document.querySelector('.pager--scroll').scrollTop = 0
+  })
+  await phone.waitForTimeout(300)
+  const openedNoteDialog = await phone.evaluate(() => {
+    const p = [...document.querySelectorAll('.chapter p')].find((el) => (el.textContent ?? '').trim().length > 20)
+    if (!p) return false
+    const range = document.createRange()
+    range.selectNodeContents(p)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    return true
+  })
+  if (!openedNoteDialog) fail('找不到可用於筆記對話框測試的段落')
+  await phone.waitForSelector('.selection-toolbar')
+  await phone.click('.selection-toolbar button:has-text("筆記")')
+  await phone.waitForSelector('.note-dialog textarea')
+  await phone.fill('.note-dialog textarea', '測試文字，用來驗證 textarea 選字不會誤觸發工具列')
+  await phone.evaluate(() => {
+    const textarea = document.querySelector('.note-dialog textarea')
+    textarea.focus()
+    textarea.select() // textarea 自己的選取，不會建立 document 的 Selection Range
+  })
+  await phone.waitForTimeout(400) // 180ms debounce + 緩衝
+  if (await phone.$('.selection-toolbar')) fail('在筆記對話框的 textarea 裡選字，誤觸發了選取工具列')
+  await phone.click('.note-dialog button:has-text("取消")')
+  await phone.waitForTimeout(200)
 
   // 重新選一次字，拍工具列與選取範圍同框的截圖
   await phone.evaluate(() => {
