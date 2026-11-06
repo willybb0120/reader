@@ -1266,3 +1266,49 @@ kbd {
     display: none;
   }
 }
+
+/* ---------- 沉浸式翻譯 ---------- */
+
+/* 譯文由屬性產生，不是文字節點：不影響標註與進度的字元位移，也選不到 */
+.chapter [data-tr]::after {
+  content: attr(data-tr);
+  display: block;
+  margin-top: 0.4em;
+  font-family: var(--serif);
+  font-size: 0.92em;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-indent: 0;
+  color: var(--ink-soft);
+}
+
+.icon-button[data-busy='true'] {
+  animation: translate-busy 1s ease-in-out infinite alternate;
+}
+
+@keyframes translate-busy {
+  to {
+    opacity: 0.35;
+  }
+}
+
+.translate-error {
+  position: fixed;
+  left: 50%;
+  bottom: 5rem;
+  z-index: 40;
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 0.875rem;
+  border-radius: 0.5rem;
+}
+
+.translate-error button {
+  color: inherit;
+  text-decoration: underline;
+}

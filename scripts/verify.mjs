@@ -6,6 +6,7 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { chromium } from 'playwright'
+import { strToU8, zipSync } from 'fflate'
 
 const outDir = process.argv[2] ?? 'screenshots'
 const PORT = 4317
@@ -14,6 +15,29 @@ mkdirSync(outDir, { recursive: true })
 const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
   stdio: 'ignore',
 })
+
+/** 一章、多段英文的最小 EPUB，測沉浸式翻譯用 */
+function englishEpub() {
+  const paragraphs = Array.from(
+    { length: 24 },
+    (_, i) =>
+      `<p>Paragraph ${i + 1}. The artist listens closely to the world. Every moment holds a small lesson worth keeping.</p>`,
+  ).join('')
+  return Buffer.from(
+    zipSync({
+      mimetype: strToU8('application/epub+zip'),
+      'META-INF/container.xml': strToU8(
+        '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+      ),
+      'content.opf': strToU8(
+        '<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">urn:uuid:english-test</dc:identifier><dc:title>English Test</dc:title><dc:language>en</dc:language></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>',
+      ),
+      'c1.xhtml': strToU8(
+        `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapter One</title></head><body><h1>Chapter One</h1>${paragraphs}</body></html>`,
+      ),
+    }),
+  )
+}
 
 const fail = (message) => {
   console.error(`✗ ${message}`)
@@ -1246,6 +1270,85 @@ try {
   await phone.evaluate(() => window.getSelection().removeAllRanges())
 
   await phone.close()
+
+  // 沉浸式翻譯：英文書每段下方出現中文。Google 請求攔下來回固定譯文，不依賴外部網路
+  const en = await browser.newPage({ viewport: { width: 900, height: 1200 } })
+  en.on('pageerror', (err) => errors.push(err.message))
+  let translateRequests = 0
+  await en.route('https://translate.googleapis.com/**', async (route) => {
+    translateRequests++
+    const q = new URLSearchParams(route.request().postData() ?? '').get('q') ?? ''
+    const translated = q
+      .split('\n')
+      .map((line) => `中文：${line.slice(0, 12)}`)
+      .join('\n')
+    await route.fulfill({
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify([[[translated, q]], null, 'en']),
+    })
+  })
+  await en.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' })
+  await en.waitForSelector('.book-card', { timeout: 20000 })
+  await en.setInputFiles('.library input[type=file]', {
+    name: 'english.epub',
+    mimeType: 'application/epub+zip',
+    buffer: englishEpub(),
+  })
+  await en.waitForSelector('.pager', { timeout: 15000 })
+  await en.waitForTimeout(600)
+  const enBefore = await readState(en)
+  const textBefore = await en.textContent('.chapter')
+  await en.click('[aria-label="沉浸式翻譯"]')
+  await en
+    .waitForFunction(() => document.querySelectorAll('.chapter [data-tr]').length === 25, null, {
+      timeout: 10000,
+    })
+    .catch(() => fail('開啟沉浸式翻譯後，譯文沒有出現在每一段'))
+  await en.waitForTimeout(400)
+  const shown = await en.evaluate(
+    () => getComputedStyle(document.querySelector('.chapter p'), '::after').content,
+  )
+  if (!shown.includes('中文：')) fail(`譯文沒有顯示在段落下方：${shown}`)
+  if ((await en.textContent('.chapter')) !== textBefore)
+    fail('譯文混進了章節文字節點，會讓標註與進度的字元位移跑掉')
+  const enAfter = await readState(en)
+  if (enAfter.pages <= enBefore.pages)
+    fail(`加上譯文後沒有重新分頁：${enBefore.pages} → ${enAfter.pages}`)
+  await en.screenshot({ path: `${outDir}/26-translate.png` })
+
+  // 劃線會重寫整章 innerHTML，譯文要跟著補回去
+  await en.evaluate(() => {
+    const range = document.createRange()
+    range.selectNodeContents(document.querySelectorAll('.chapter p')[0])
+    window.getSelection().removeAllRanges()
+    window.getSelection().addRange(range)
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+  })
+  await en.waitForSelector('.selection-toolbar')
+  await en.click('[aria-label="黃色劃線"]')
+  await en.waitForSelector('.chapter mark')
+  await en.waitForTimeout(200)
+  if ((await en.$$('.chapter [data-tr]')).length !== 25) fail('劃線後譯文消失')
+
+  // 重新載入：開關要記住，譯文走快取不再打網路
+  const requestsSoFar = translateRequests
+  await en.reload({ waitUntil: 'networkidle' })
+  await en.waitForSelector('.chapter [data-tr]', { timeout: 10000 }).catch(() => fail('重新載入後譯文沒有還原'))
+  if (translateRequests !== requestsSoFar) fail('已翻過的章節又重新呼叫翻譯服務')
+
+  await en.click('[aria-label="沉浸式翻譯"]')
+  await en.waitForTimeout(300)
+  if ((await en.$$('.chapter [data-tr]')).length !== 0) fail('關閉沉浸式翻譯後譯文仍在')
+
+  // 中文書不顯示翻譯開關
+  await en.click('[aria-label="回到書櫃"]')
+  await en.waitForSelector('.library__grid')
+  const zhCard = en.locator('.book-card', { hasNotText: 'English Test' })
+  await zhCard.locator('.book-card__open').click()
+  await en.waitForSelector('.pager')
+  if (await en.$('[aria-label="沉浸式翻譯"]')) fail('中文書不該出現沉浸式翻譯開關')
+  await en.close()
 
   // 離線
   const offlinePage = await browser.newPage()

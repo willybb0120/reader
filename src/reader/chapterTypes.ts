@@ -38,6 +38,8 @@ export interface ChapterViewProps {
   highlightRange?: { start: number; end: number }
   /** 正在朗讀的句子範圍 */
   speakingRange?: { start: number; end: number }
+  /** 沉浸式翻譯的譯文，與 translatableBlocks 的順序對應 */
+  translations?: readonly (string | undefined)[]
   /** 讓外部（鍵盤快捷鍵）也能翻頁 */
   pagerRef: React.RefObject<PagerApi | null>
   onNavigate: (chapterIndex: number, fragment?: string) => void

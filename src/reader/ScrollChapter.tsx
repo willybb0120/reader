@@ -23,8 +23,7 @@ const PULL_THRESHOLD = 72
 const PULL_REBOUND_MS = 220
 /**
  * 捲動停止多久才算「安定」，沒有 scrollend 事件的瀏覽器用這個逾時後備。
- * App 存檔本來就節流到 800ms，這裡不需要更即時；同時也是回報位置／朗讀 seek 的收斂點，
- * 太短會讓慣性滾動中間也觸發，太長會讓進度看起來卡頓。
+ * 同時也是回報位置／朗讀 seek 的收斂點，太短會讓慣性滾動中間也觸發，太長會讓進度看起來卡頓。
  */
 const SCROLL_IDLE_MS = 200
 
@@ -35,6 +34,7 @@ export function ScrollChapter({
   layoutKey,
   highlightRange,
   speakingRange,
+  translations,
   pagerRef,
   onNavigate,
   onSelect,
@@ -63,6 +63,8 @@ export function ScrollChapter({
   const [pullDir, setPullDir] = useState<'end' | 'start' | null>(null)
   /** 章節純文字長度；只在內容真的變動時整棵樹算一次，捲動收斂回報時直接複用 */
   const chapterLengthRef = useRef(0)
+  /** 視窗頂端那個字的位移；譯文出現或消失讓內容變高變矮時，靠它留在同一句 */
+  const offsetRef = useRef(0)
 
   /**
    * 程式捲動（翻頁／朗讀跟隨／重排）進行中的旗標，抽成獨立工廠方便單元測試。
@@ -81,6 +83,7 @@ export function ScrollChapter({
     annotations,
     highlightRange,
     speakingRange,
+    translations,
     onSelect,
     onNavigate,
     onAnnotationClick,
@@ -104,12 +107,18 @@ export function ScrollChapter({
       top = element ? scrollTopForElement(content, element) : 0
     }
     viewport.scrollTop = clampScrollTop(top, viewport.clientHeight, viewport.scrollHeight)
+    offsetRef.current =
+      target.kind === 'offset' ? target.offset : charOffsetAtScrollTop(content, viewport.scrollTop)
     crossedAtRef.current = Date.now()
   }, [])
 
   useLayoutEffect(() => {
     settle(entry)
   }, [chapter.html, annotations, highlightRange, entry, layoutKey, settle])
+
+  useLayoutEffect(() => {
+    settle({ kind: 'offset', offset: offsetRef.current })
+  }, [translations, settle])
 
   // 章節文字實際變動才重新量測長度，不要每次捲動都重算
   useLayoutEffect(() => {
@@ -130,6 +139,7 @@ export function ScrollChapter({
     const report = () => {
       idleTimer = undefined
       const offset = charOffsetAtScrollTop(content, viewport.scrollTop)
+      offsetRef.current = offset
       onPositionChange(offset, chapterLengthRef.current)
       if (guard.active) return
       if (onUserTurn) onUserTurn(offset)

@@ -18,6 +18,8 @@ export interface Settings {
   rate: number
   /** 朗讀語音的 voiceURI，空字串代表用預設 */
   voiceUri: string
+  /** 英文書的沉浸式翻譯：每段下方顯示中文 */
+  translate: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -31,6 +33,7 @@ export const DEFAULT_SETTINGS: Settings = {
   scroll: false,
   rate: 1,
   voiceUri: '',
+  translate: false,
 }
 
 export const LIMITS = {
@@ -65,6 +68,7 @@ function normalize(raw: unknown): Settings {
     scroll: typeof input.scroll === 'boolean' ? input.scroll : DEFAULT_SETTINGS.scroll,
     rate: clamp(input.rate, LIMITS.rate, DEFAULT_SETTINGS.rate),
     voiceUri: typeof input.voiceUri === 'string' ? input.voiceUri : DEFAULT_SETTINGS.voiceUri,
+    translate: typeof input.translate === 'boolean' ? input.translate : DEFAULT_SETTINGS.translate,
   }
 }
 
