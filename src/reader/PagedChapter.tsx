@@ -51,6 +51,8 @@ export function PagedChapter({
   const [enterOffset, setEnterOffset] = useState(0)
   const pageRef = useRef(0)
   const layoutRef = useRef(EMPTY_LAYOUT)
+  /** 目前想停留的字元位移。重新分頁時以它為準，不從可能已偏掉的頁碼反推 */
+  const anchorRef = useRef(0)
   pageRef.current = page
   layoutRef.current = layout
 
@@ -85,7 +87,10 @@ export function PagedChapter({
           ? -(measured.pageWidth + measured.gap)
           : 0,
     )
-    setPage(Math.min(Math.max(0, next), total - 1))
+    const clamped = Math.min(Math.max(0, next), total - 1)
+    anchorRef.current =
+      target.kind === 'offset' ? target.offset : charOffsetAtPage(content, clamped, measured)
+    setPage(clamped)
   }, [])
 
   // 換章、標註變動、改排版設定都要重新分頁
@@ -99,12 +104,19 @@ export function PagedChapter({
     const content = contentRef.current
     if (!viewport || !content) return
 
-    const observer = new ResizeObserver(() => {
-      const offset = charOffsetAtPage(content, pageRef.current, layoutRef.current)
-      relayout({ kind: 'offset', offset })
-    })
+    const observer = new ResizeObserver(() => relayout({ kind: 'offset', offset: anchorRef.current }))
     observer.observe(viewport)
     return () => observer.disconnect()
+  }, [relayout])
+
+  // 圖片載入前高度是 0，載入後內容重排但視窗大小沒變，要自己重新分頁
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content) return
+    const onImageLoad = () => relayout({ kind: 'offset', offset: anchorRef.current })
+    // load 不會冒泡，要在捕獲階段接
+    content.addEventListener('load', onImageLoad, true)
+    return () => content.removeEventListener('load', onImageLoad, true)
   }, [relayout])
 
   // 回報目前位置供進度記錄
@@ -124,8 +136,9 @@ export function PagedChapter({
         setEnterOffset(0)
         setPage(next)
         const content = contentRef.current
-        if (content && onUserTurn) {
-          onUserTurn(charOffsetAtPage(content, next, layoutRef.current))
+        if (content) {
+          anchorRef.current = charOffsetAtPage(content, next, layoutRef.current)
+          onUserTurn?.(anchorRef.current)
         }
       }
     },
@@ -148,6 +161,7 @@ export function PagedChapter({
     if (!content) return
     const target = pageForCharOffset(content, offset, layoutRef.current)
     if (target === pageRef.current) return
+    anchorRef.current = offset
     setAnimate(true)
     setEnterOffset(0)
     setPage(target)
