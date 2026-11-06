@@ -606,6 +606,37 @@ try {
   if (!(await page.textContent('.book-card__progress'))) fail('書櫃沒有顯示閱讀進度')
   await page.screenshot({ path: `${outDir}/16-library-progress.png` })
 
+  // 章中途退回書櫃再開，連續兩次都要回到同一頁。
+  // 快速翻頁（間隔短於舊版 800ms 存檔節流）＋這一章有圖片（載入前高度 0 會讓分頁算錯）
+  await page.click('.book-card__open')
+  await page.waitForSelector('.pager')
+  await page.waitForTimeout(600)
+  await page.click('[aria-label="開啟目錄"]')
+  await page.waitForSelector('.drawer')
+  await page.waitForTimeout(400)
+  await (await page.$$('.toc__item'))[3].click()
+  await page.waitForTimeout(600)
+  const { pages: chapterPages } = await readState(page)
+  if (chapterPages < 2) fail(`用來測重開位置的章節只有 ${chapterPages} 頁`)
+  // 翻到本章最後一頁，連續翻頁間隔（450ms）短於舊版存檔節流
+  for (let i = 1; i < chapterPages; i++) await tap(page, 'next')
+  const leftAt = await readState(page)
+  if (leftAt.page !== chapterPages - 1) fail(`章中途翻頁失敗：${JSON.stringify(leftAt)}`)
+  for (let round = 1; round <= 2; round++) {
+    await page.click('[aria-label="回到書櫃"]')
+    await page.waitForSelector('.library__grid')
+    await page.waitForTimeout(300)
+    await page.click('.book-card__open')
+    await page.waitForSelector('.pager')
+    await page.waitForTimeout(1000)
+    const back = await readState(page)
+    if (back.title !== leftAt.title || back.page !== leftAt.page)
+      fail(`第 ${round} 次重開沒回到上次位置：${leftAt.title} p${leftAt.page} → ${back.title} p${back.page}`)
+  }
+  await page.click('[aria-label="回到書櫃"]')
+  await page.waitForSelector('.library__grid')
+  await page.waitForTimeout(300)
+
   // 手機尺寸
   const phone = await browser.newPage({
     viewport: { width: 390, height: 844 },

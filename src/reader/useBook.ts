@@ -7,8 +7,6 @@ import { withTrimmedImages } from './trimImages'
 
 export type Status = 'idle' | 'loading' | 'ready' | 'error'
 
-const SAVE_INTERVAL_MS = 800
-
 /** 開啟書櫃中的某一本書，並持續記錄閱讀進度。id 為 null 時不載入任何書。 */
 export function useBook(id: string | null) {
   const [book, setBook] = useState<Book | null>(null)
@@ -22,7 +20,6 @@ export function useBook(id: string | null) {
 
   const bookRef = useRef<Book | null>(null)
   const chapterRef = useRef<Chapter | null>(null)
-  const lastSaveRef = useRef(0)
   const chapterLengths = useMemo(() => chapterTexts.map((text) => text.length), [chapterTexts])
   const lengthsRef = useRef<number[]>([])
 
@@ -120,9 +117,6 @@ export function useBook(id: string | null) {
       setProgress(overall)
 
       if (!id) return
-      const now = Date.now()
-      if (now - lastSaveRef.current < SAVE_INTERVAL_MS) return
-      lastSaveRef.current = now
       saveProgress(id, { chapterIndex: index, ratio, overall, startOffset: charOffset })
     },
     [id],
