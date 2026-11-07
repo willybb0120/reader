@@ -39,6 +39,24 @@ function englishEpub() {
   )
 }
 
+/** 只有一章的最小 EPUB，測書櫃用 */
+function miniEpub(title, creator) {
+  return Buffer.from(
+    zipSync({
+      mimetype: strToU8('application/epub+zip'),
+      'META-INF/container.xml': strToU8(
+        '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+      ),
+      'content.opf': strToU8(
+        `<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">urn:uuid:${title}</dc:identifier><dc:title>${title}</dc:title><dc:creator>${creator}</dc:creator><dc:language>en</dc:language></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>`,
+      ),
+      'c1.xhtml': strToU8(
+        `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title></head><body><h1>${title}</h1><p>Body of ${title}.</p></body></html>`,
+      ),
+    }),
+  )
+}
+
 const fail = (message) => {
   console.error(`✗ ${message}`)
   server.kill()
@@ -625,7 +643,7 @@ try {
 
   // 回到書櫃
   await page.click('[aria-label="回到書櫃"]')
-  await page.waitForSelector('.library__grid')
+  await page.waitForSelector('.carousel')
   await page.waitForTimeout(300)
   if (!(await page.textContent('.book-card__progress'))) fail('書櫃沒有顯示閱讀進度')
   await page.screenshot({ path: `${outDir}/16-library-progress.png` })
@@ -648,7 +666,7 @@ try {
   if (leftAt.page !== chapterPages - 1) fail(`章中途翻頁失敗：${JSON.stringify(leftAt)}`)
   for (let round = 1; round <= 2; round++) {
     await page.click('[aria-label="回到書櫃"]')
-    await page.waitForSelector('.library__grid')
+    await page.waitForSelector('.carousel')
     await page.waitForTimeout(300)
     await page.click('.book-card__open')
     await page.waitForSelector('.pager')
@@ -658,7 +676,7 @@ try {
       fail(`第 ${round} 次重開沒回到上次位置：${leftAt.title} p${leftAt.page} → ${back.title} p${back.page}`)
   }
   await page.click('[aria-label="回到書櫃"]')
-  await page.waitForSelector('.library__grid')
+  await page.waitForSelector('.carousel')
   await page.waitForTimeout(300)
 
   // 手機尺寸
@@ -1345,12 +1363,90 @@ try {
 
   // 中文書不顯示翻譯開關
   await en.click('[aria-label="回到書櫃"]')
-  await en.waitForSelector('.library__grid')
-  const zhCard = en.locator('.book-card', { hasNotText: 'English Test' })
-  await zhCard.locator('.book-card__open').click()
+  await en.waitForSelector('.carousel')
+  await en.fill('[aria-label="搜尋書櫃"]', '創造力')
+  await en.waitForTimeout(400)
+  await en.click('.book-card[data-center="true"] .book-card__open')
   await en.waitForSelector('.pager')
   if (await en.$('[aria-label="沉浸式翻譯"]')) fail('中文書不該出現沉浸式翻譯開關')
   await en.close()
+
+  // 書櫃轉盤：方向鍵、拖曳、點旁邊的書轉過去、點正中間的書開啟，以及搜尋
+  const shelf = await browser.newPage({ viewport: { width: 1100, height: 900 } })
+  shelf.on('pageerror', (err) => errors.push(err.message))
+  await shelf.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' })
+  await shelf.waitForSelector('.book-card', { timeout: 20000 })
+  await shelf.setInputFiles('.library input[type=file]', [
+    { name: 'a.epub', mimeType: 'application/epub+zip', buffer: miniEpub('Alpha Book', 'Ann Author') },
+    { name: 'b.epub', mimeType: 'application/epub+zip', buffer: miniEpub('Beta Book', 'Ben Writer') },
+    { name: 'g.epub', mimeType: 'application/epub+zip', buffer: miniEpub('Gamma Book', 'Gil Poet') },
+  ])
+  await shelf.waitForSelector('.pager', { timeout: 15000 })
+  await shelf.click('[aria-label="回到書櫃"]')
+  await shelf.waitForSelector('.carousel')
+  await shelf.waitForTimeout(400)
+  if ((await shelf.$$('.book-card')).length !== 4) fail('書櫃轉盤的書本數量錯誤')
+  const shelfOverflow = await shelf.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  )
+  if (shelfOverflow > 0) fail(`書櫃轉盤造成 ${shelfOverflow}px 水平溢出`)
+  const centerTitle = () => shelf.textContent('.carousel__title')
+  await shelf.screenshot({ path: `${outDir}/27-carousel.png` })
+
+  const t0 = await centerTitle()
+  await shelf.keyboard.press('ArrowRight')
+  await shelf.waitForTimeout(900)
+  const t1 = await centerTitle()
+  if (t1 === t0) fail('按 → 沒有轉到下一本')
+
+  const stage = await shelf.locator('.carousel__stage').boundingBox()
+  await shelf.mouse.move(stage.x + stage.width / 2, stage.y + stage.height / 2)
+  await shelf.mouse.down()
+  // 慢慢拖、停一下再放：測的是「拖多遠轉多遠」，不讓甩動的慣性把 4 本書轉回原位
+  for (let i = 1; i <= 10; i++) {
+    await shelf.mouse.move(stage.x + stage.width / 2 - 26 * i, stage.y + stage.height / 2)
+    await shelf.waitForTimeout(16)
+  }
+  await shelf.screenshot({ path: `${outDir}/28-carousel-drag.png` })
+  await shelf.waitForTimeout(150)
+  await shelf.mouse.up()
+  await shelf.waitForTimeout(1200)
+  if ((await centerTitle()) === t1) fail('拖曳沒有轉動書櫃')
+  if (await shelf.$('.pager')) fail('拖曳放手被當成點擊開了書')
+
+  // 點正前方右邊那一本：要轉過去，不是直接開書
+  const neighbour = await shelf.evaluate(() => {
+    const cards = [...document.querySelectorAll('.book-card')]
+    const mid = window.innerWidth / 2
+    const right = cards
+      .filter((c) => c.dataset.center === 'false' && c.style.visibility !== 'hidden')
+      .map((c) => ({ c, x: c.getBoundingClientRect().left + c.getBoundingClientRect().width / 2 }))
+      .filter(({ x }) => x > mid)
+      .sort((a, b) => a.x - b.x)[0]
+    return right && { x: right.x, label: right.c.querySelector('button').getAttribute('aria-label') }
+  })
+  if (!neighbour) fail('找不到右側的書')
+  await shelf.mouse.click(neighbour.x, stage.y + stage.height / 2)
+  await shelf.waitForTimeout(1200)
+  if (await shelf.$('.pager')) fail('點旁邊的書直接開了書，應該先轉過去')
+  if ((await centerTitle()) !== neighbour.label.replace('轉到 ', ''))
+    fail(`點旁邊的書沒有轉到它：${neighbour.label} → ${await centerTitle()}`)
+
+  await shelf.click('.book-card[data-center="true"] .book-card__open')
+  await shelf.waitForSelector('.pager', { timeout: 10000 }).catch(() => fail('點正中間的書沒有開啟'))
+  await shelf.click('[aria-label="回到書櫃"]')
+  await shelf.waitForSelector('.carousel')
+
+  await shelf.fill('[aria-label="搜尋書櫃"]', 'gil')
+  await shelf.waitForTimeout(400)
+  if ((await shelf.$$('.book-card')).length !== 1) fail('依作者搜尋的結果數量錯誤')
+  if ((await centerTitle()) !== 'Gamma Book') fail('搜尋結果沒有轉到正前方')
+  await shelf.screenshot({ path: `${outDir}/29-carousel-search.png` })
+  await shelf.fill('[aria-label="搜尋書櫃"]', 'zzz')
+  if (!(await shelf.textContent('.library__empty'))?.includes('找不到')) fail('搜尋無結果時沒有提示')
+  await shelf.fill('[aria-label="搜尋書櫃"]', '')
+  if ((await shelf.$$('.book-card')).length !== 4) fail('清空搜尋後沒有回到全部的書')
+  await shelf.close()
 
   // 離線
   const offlinePage = await browser.newPage()
