@@ -3,6 +3,7 @@ import type { Chapter } from '../epub/parseEpub'
 import type { Annotation } from '../store/annotations'
 import type { TextSelection } from './chapterTypes'
 import { getTextOffsets, wrapRange } from './textRange'
+import { applyTranslations, chapterSentences } from './translate'
 
 /**
  * selectionchange 的 debounce 間隔。拖曳選取控點時每個微小變動都會觸發 selectionchange，
@@ -16,6 +17,7 @@ export interface ChapterContentOptions {
   annotations: Annotation[]
   highlightRange?: { start: number; end: number }
   speakingRange?: { start: number; end: number }
+  translations?: readonly (string | undefined)[]
   onSelect: (selection: TextSelection | null) => void
   onNavigate: (chapterIndex: number, fragment?: string) => void
   onAnnotationClick: (id: string) => void
@@ -31,6 +33,7 @@ export function useChapterContent({
   annotations,
   highlightRange,
   speakingRange,
+  translations,
   onSelect,
   onNavigate,
   onAnnotationClick,
@@ -50,6 +53,16 @@ export function useChapterContent({
       wrapRange(content, highlightRange.start, highlightRange.end, { searchHit: 'true' })
     }
   }, [contentRef, chapter.html, annotations, highlightRange])
+
+  // 譯文由每句後面的空 span 以 CSS ::after 顯示，不插入文字：標註、進度、搜尋用的字元位移才不會跑掉
+  useLayoutEffect(() => {
+    const content = contentRef.current
+    if (!content) return
+    const sentences = chapterSentences(content)
+    // 句數對不上代表譯文不屬於這份內容，寧可不顯示也不要錯位
+    const usable = translations?.length === sentences.length ? translations : undefined
+    applyTranslations(content, sentences, usable)
+  }, [contentRef, translations, chapter.html, annotations, highlightRange])
 
   // 朗讀高亮單獨處理：重設 innerHTML 會觸發重新排版，每念一句都重排太浪費
   useEffect(() => {

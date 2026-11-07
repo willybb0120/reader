@@ -8,6 +8,8 @@ import { useAnnotations } from './reader/useAnnotations'
 import { useBook } from './reader/useBook'
 import { useLibrary } from './reader/useLibrary'
 import { useNarration } from './reader/useNarration'
+import { useTranslation } from './reader/useTranslation'
+import { isEnglish } from './reader/translate'
 import { PlayerBar } from './ui/PlayerBar'
 import type { SearchHit } from './reader/search'
 import { toMarkdown, type Annotation, type Color } from './store/annotations'
@@ -20,7 +22,14 @@ import { NoteDialog } from './ui/NoteDialog'
 import { SearchPanel } from './ui/SearchPanel'
 import { SettingsPanel } from './ui/SettingsPanel'
 import { Toc } from './ui/Toc'
-import { HighlightIcon, LibraryIcon, ListIcon, SearchIcon, TypeIcon } from './ui/icons'
+import {
+  HighlightIcon,
+  LibraryIcon,
+  ListIcon,
+  SearchIcon,
+  TranslateIcon,
+  TypeIcon,
+} from './ui/icons'
 
 type Panel = 'toc' | 'search' | 'settings' | 'annotations' | null
 
@@ -45,6 +54,8 @@ export function App() {
   } = useBook(bookId)
   const { settings, update: updateSettings } = useSettings()
   const { annotations, byChapter, add, update, remove } = useAnnotations(bookId ?? '')
+  const english = book ? isEnglish(book.metadata.language) : false
+  const translation = useTranslation(bookId, book, chapter, english && settings.translate)
 
   const [panel, setPanel] = useState<Panel>(null)
   const [selection, setSelection] = useState<TextSelection | null>(null)
@@ -338,6 +349,16 @@ export function App() {
           </>
         )}
         <div className="topbar__title">{chapter?.title ?? book?.metadata.title ?? ''}</div>
+        {english && (
+          <button
+            className="icon-button"
+            onClick={() => changeSettings({ translate: !settings.translate })}
+            aria-label="沉浸式翻譯"
+            aria-pressed={settings.translate}
+          >
+            <TranslateIcon />
+          </button>
+        )}
         {book && (
           <button
             className="icon-button"
@@ -400,9 +421,21 @@ export function App() {
             onPastEnd={onPastEnd}
             onPastStart={onPastStart}
             speakingRange={narration.sentence}
+            translations={translation.translations}
             onPositionChange={onPositionChange}
             onUserTurn={narration.playing ? narration.seekToOffset : undefined}
           />
+          {translation.status === 'loading' && (
+            <div className="translate-status" role="status">
+              翻譯本章中…
+            </div>
+          )}
+          {translation.status === 'error' && (
+            <div className="translate-status" role="alert">
+              翻譯失敗：{translation.error}
+              <button onClick={translation.retry}>重試</button>
+            </div>
+          )}
           <PlayerBar
             supported={narration.supported}
             playing={narration.playing}

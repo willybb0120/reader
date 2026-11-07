@@ -30,6 +30,15 @@ export function CloseIcon({ size = 20 }: IconProps) {
   )
 }
 
+export function TranslateIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M3 5h9M7.5 3v2M5 5c.6 3 2.8 5.6 6 7M10 5c-.6 3-2.8 5.6-6 7" />
+      <path d="M12.5 21l4-10 4 10M14 17.5h5" />
+    </svg>
+  )
+}
+
 export function TypeIcon({ size = 20 }: IconProps) {
   return (
     <svg {...base(size)}>

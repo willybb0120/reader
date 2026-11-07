@@ -20,6 +20,7 @@ export function PagedChapter({
   layoutKey,
   highlightRange,
   speakingRange,
+  translations,
   pagerRef,
   onNavigate,
   onSelect,
@@ -38,6 +39,7 @@ export function PagedChapter({
     annotations,
     highlightRange,
     speakingRange,
+    translations,
     onSelect,
     onNavigate,
     onAnnotationClick,
@@ -56,8 +58,11 @@ export function PagedChapter({
   pageRef.current = page
   layoutRef.current = layout
 
-  /** 重新量測分頁，並停在 target 指定的位置 */
-  const relayout = useCallback((target: Entry) => {
+  /**
+   * 重新量測分頁，並停在 target 指定的位置。
+   * reflow 代表只是內容重排（圖片、譯文載入），不重設換章的入場位移
+   */
+  const relayout = useCallback((target: Entry, reflow = false) => {
     const viewport = viewportRef.current
     const content = contentRef.current
     if (!viewport || !content) return
@@ -79,7 +84,13 @@ export function PagedChapter({
       const element = content.querySelector(selector)
       next = element ? elementPage(content, element, measured) : 0
     }
+    const clamped = Math.min(Math.max(0, next), total - 1)
+    anchorRef.current =
+      target.kind === 'offset' ? target.offset : charOffsetAtPage(content, clamped, measured)
+    setPage(clamped)
+    // 重排後頁碼可能變了，直接跳到定位，不要滑過去
     setAnimate(false)
+    if (reflow) return
     setEnterOffset(
       target.slide === 'forward'
         ? measured.pageWidth + measured.gap
@@ -87,16 +98,16 @@ export function PagedChapter({
           ? -(measured.pageWidth + measured.gap)
           : 0,
     )
-    const clamped = Math.min(Math.max(0, next), total - 1)
-    anchorRef.current =
-      target.kind === 'offset' ? target.offset : charOffsetAtPage(content, clamped, measured)
-    setPage(clamped)
   }, [])
 
   // 換章、標註變動、改排版設定都要重新分頁
   useLayoutEffect(() => {
     relayout(entry)
   }, [chapter.html, annotations, highlightRange, entry, layoutKey, relayout])
+
+  useLayoutEffect(() => {
+    relayout({ kind: 'offset', offset: anchorRef.current }, true)
+  }, [translations, relayout])
 
   // 視窗大小改變時維持在原本讀到的位置
   useEffect(() => {
@@ -113,7 +124,7 @@ export function PagedChapter({
   useEffect(() => {
     const content = contentRef.current
     if (!content) return
-    const onImageLoad = () => relayout({ kind: 'offset', offset: anchorRef.current })
+    const onImageLoad = () => relayout({ kind: 'offset', offset: anchorRef.current }, true)
     // load 不會冒泡，要在捕獲階段接
     content.addEventListener('load', onImageLoad, true)
     return () => content.removeEventListener('load', onImageLoad, true)
