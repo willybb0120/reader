@@ -1299,17 +1299,19 @@ try {
   await en.waitForTimeout(600)
   const enBefore = await readState(en)
   const textBefore = await en.textContent('.chapter')
+  // 章名 1 句＋24 段各 3 句（Paragraph N. / The artist… / Every moment…）
+  const SENTENCES = 1 + 24 * 3
   await en.click('[aria-label="沉浸式翻譯"]')
   await en
-    .waitForFunction(() => document.querySelectorAll('.chapter [data-tr]').length === 25, null, {
+    .waitForFunction(() => (n) => document.querySelectorAll('.chapter [data-tr]').length === n, SENTENCES, {
       timeout: 10000,
     })
-    .catch(() => fail('開啟沉浸式翻譯後，譯文沒有出現在每一段'))
+    .catch(() => fail('開啟沉浸式翻譯後，譯文沒有出現在每一句後面'))
   await en.waitForTimeout(400)
   const shown = await en.evaluate(
-    () => getComputedStyle(document.querySelector('.chapter p'), '::after').content,
+    () => getComputedStyle(document.querySelector('.chapter [data-tr]'), '::after').content,
   )
-  if (!shown.includes('中文：')) fail(`譯文沒有顯示在段落下方：${shown}`)
+  if (!shown.includes('中文：')) fail(`譯文沒有顯示在句子下方：${shown}`)
   if ((await en.textContent('.chapter')) !== textBefore)
     fail('譯文混進了章節文字節點，會讓標註與進度的字元位移跑掉')
   const enAfter = await readState(en)
@@ -1329,7 +1331,7 @@ try {
   await en.click('[aria-label="黃色劃線"]')
   await en.waitForSelector('.chapter mark')
   await en.waitForTimeout(200)
-  if ((await en.$$('.chapter [data-tr]')).length !== 25) fail('劃線後譯文消失')
+  if ((await en.$$('.chapter [data-tr]')).length !== SENTENCES) fail('劃線後譯文消失')
 
   // 重新載入：開關要記住，譯文走快取不再打網路
   const requestsSoFar = translateRequests

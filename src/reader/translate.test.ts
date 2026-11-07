@@ -1,7 +1,14 @@
 import { describe, expect, test, vi } from 'vitest'
-import { batchTexts, isEnglish, translateBlocks, translatableBlocks } from './translate'
+import { plainText } from './textRange'
+import {
+  applyTranslations,
+  batchTexts,
+  chapterSentences,
+  isEnglish,
+  translateLines,
+} from './translate'
 
-/** 模擬 Google 回應：把每行加上「譯:」前綴，並依句號切成多個片段 */
+/** 模擬 Google 回應：每行加上「譯:」前綴，並依句號切成多個片段 */
 function fakeGoogle(transform = (line: string) => `譯:${line}`) {
   return vi.fn(async (_url: string, init?: RequestInit) => {
     const q = new URLSearchParams(String(init?.body)).get('q') ?? ''
@@ -9,6 +16,12 @@ function fakeGoogle(transform = (line: string) => `譯:${line}`) {
     const segments = translated.split(/(?<=\.)/).map((part) => [part, '', null])
     return new Response(JSON.stringify([segments, null, 'en']))
   })
+}
+
+function root(html: string): HTMLElement {
+  const element = document.createElement('div')
+  element.innerHTML = html
+  return element
 }
 
 describe('isEnglish', () => {
@@ -26,37 +39,65 @@ describe('batchTexts', () => {
   })
 })
 
-describe('translatableBlocks', () => {
-  test('取出有文字的段落，不重複取巢狀區塊', () => {
-    const root = document.createElement('div')
-    root.innerHTML =
-      '<h1>Title</h1><p>One</p><p>  </p><blockquote><p>Quote</p></blockquote><ul><li>Item</li></ul><p><img></p>'
-    expect(translatableBlocks(root).map((el) => el.textContent)).toEqual([
-      'Title',
-      'One',
-      'Quote',
-      'Item',
-    ])
+describe('chapterSentences', () => {
+  test('逐段切句，位移是章節純文字座標', () => {
+    const container = root(
+      '<h1>Title</h1><p>One here. Two <em>there</em>!  </p><p>  </p><blockquote><p>Quote.</p></blockquote>',
+    )
+    const text = plainText(container)
+    const sentences = chapterSentences(container)
+
+    expect(sentences.map((s) => s.text)).toEqual(['Title', 'One here.', 'Two there!', 'Quote.'])
+    for (const s of sentences) expect(text.slice(s.start, s.end)).toBe(s.text)
   })
 })
 
-describe('translateBlocks', () => {
-  test('一次請求翻多段，依換行對回各段', async () => {
+describe('applyTranslations', () => {
+  test('譯文插在每句之後，不改動章節文字', () => {
+    const container = root('<p>One here. Two <mark>there!</mark></p>')
+    const before = plainText(container)
+    const sentences = chapterSentences(container)
+
+    applyTranslations(container, sentences, ['一', '二'])
+
+    expect(plainText(container)).toBe(before)
+    const notes = [...container.querySelectorAll<HTMLElement>('[data-tr]')]
+    expect(notes.map((n) => n.dataset.tr)).toEqual(['一', '二'])
+    // 句尾落在 <mark> 結尾時放到 mark 外面，譯文不會帶到劃線底色
+    expect(notes[1].parentElement?.tagName).toBe('P')
+    expect(notes[0].previousSibling?.textContent).toBe('One here.')
+  })
+
+  test('再次套用或清空時移除舊譯文', () => {
+    const container = root('<p>One. Two.</p>')
+    const sentences = chapterSentences(container)
+    applyTranslations(container, sentences, ['一', '二'])
+    applyTranslations(container, sentences, ['壹', undefined])
+    expect([...container.querySelectorAll<HTMLElement>('[data-tr]')].map((n) => n.dataset.tr)).toEqual(['壹'])
+
+    applyTranslations(container, sentences, undefined)
+    expect(container.querySelectorAll('[data-tr]')).toHaveLength(0)
+    expect(container.innerHTML).toBe('<p>One. Two.</p>')
+  })
+})
+
+describe('translateLines', () => {
+  test('一次請求翻多行，依換行對回各行', async () => {
     const fetcher = fakeGoogle()
-    const result = await translateBlocks(['Hello. World.', 'Second\nline'], fetcher)
+    const result = await translateLines(['Hello. World.', 'Second\nline'], fetcher)
     expect(result).toEqual(['譯:Hello. World.', '譯:Second line'])
     expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
-  test('段數對不上時改成逐段翻譯', async () => {
+  test('行數對不上時改成逐行翻譯', async () => {
     const fetcher = fakeGoogle((line) => `${line}\n多出來的一行`)
-    const result = await translateBlocks(['A', 'B'], fetcher)
+    const result = await translateLines(['A', 'B'], fetcher)
     expect(result).toHaveLength(2)
     expect(fetcher).toHaveBeenCalledTimes(3)
   })
 
   test('HTTP 失敗時丟出錯誤', async () => {
     const fetcher = vi.fn(async () => new Response('', { status: 429 }))
-    await expect(translateBlocks(['A'], fetcher)).rejects.toThrow('429')
+    await expect(translateLines(['A'], fetcher)).rejects.toThrow('429')
   })
 })

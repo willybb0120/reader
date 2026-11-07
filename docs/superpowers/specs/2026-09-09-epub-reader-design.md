@@ -57,8 +57,8 @@ src/
 - **朗讀高亮不重設 innerHTML**：改用單獨的 effect 解開上一句、包住新的一句，
   否則每念一句都會觸發重新分頁。高亮只用背景色，不加 padding 或邊框，
   才不會動到換行與分頁位置。
-- **沉浸式翻譯用 Google 免費介面、譯文放 `data-tr` 屬性由 `::after` 顯示**：免 key、手機可用但非官方；
-  不插文字節點，字元位移不變。只對 `en` 書開放，每章譯文存 IndexedDB（`useTranslation.ts`）。
+- **沉浸式翻譯用 Google 免費介面、逐句插空 `span[data-tr]` 由 `::after` 顯示**：免 key、手機可用但非官方；
+  不插文字，字元位移不變。整章翻完才一次套用並預翻下一章，避免版面跳動（`useTranslation.ts`）。
 
 ## 功能與分支
 

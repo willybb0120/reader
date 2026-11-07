@@ -1269,30 +1269,22 @@ kbd {
 
 /* ---------- 沉浸式翻譯 ---------- */
 
-/* 譯文由屬性產生，不是文字節點：不影響標註與進度的字元位移，也選不到 */
+/* 每句後面的空 span 以 ::after 顯示譯文：不是文字節點，不影響標註與進度的字元位移，也選不到 */
 .chapter [data-tr]::after {
   content: attr(data-tr);
   display: block;
-  margin-top: 0.4em;
+  margin: 0.15em 0 0.45em;
   font-family: var(--serif);
-  font-size: 0.92em;
+  font-size: 0.9em;
   font-weight: 400;
+  line-height: 1.7;
   letter-spacing: 0;
   text-indent: 0;
+  text-align: start;
   color: var(--ink-soft);
 }
 
-.icon-button[data-busy='true'] {
-  animation: translate-busy 1s ease-in-out infinite alternate;
-}
-
-@keyframes translate-busy {
-  to {
-    opacity: 0.35;
-  }
-}
-
-.translate-error {
+.translate-status {
   position: fixed;
   left: 50%;
   bottom: 5rem;
@@ -1300,15 +1292,16 @@ kbd {
   display: flex;
   gap: 0.75rem;
   align-items: center;
-  padding: 0.6rem 1rem;
+  padding: 0.5rem 1rem;
   transform: translateX(-50%);
   background: var(--ink);
   color: var(--paper);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   border-radius: 0.5rem;
+  opacity: 0.85;
 }
 
-.translate-error button {
+.translate-status button {
   color: inherit;
   text-decoration: underline;
 }

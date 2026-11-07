@@ -1,72 +1,124 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createStore, get, set } from 'idb-keyval'
-import type { Chapter } from '../epub/parseEpub'
-import { batchTexts, translatableBlocks, translateBlocks } from './translate'
+import type { Book, Chapter } from '../epub/parseEpub'
+import { batchTexts, chapterSentences, translateLines } from './translate'
 
 /** 已翻好的章節存起來：同一章不重複打網路，離線也看得到 */
 const store = createStore('reader-translations', 'chapters')
+/** 快取格式版本。改了切句方式就要換，舊的譯文對不上新的句子 */
+const VERSION = 'sentences-v1'
+/** 同時送出的請求數：太多容易被 Google 擋，太少長章節要等很久 */
+const CONCURRENCY = 3
 
-export type TranslationStatus = 'loading' | 'done' | 'error'
+/** 這次開啟期間翻好的章節。放記憶體才能在換章的第一次渲染就同步拿到，不必先畫原文再重排 */
+const memory = new Map<string, string[]>()
+/** 正在翻的章節，避免預翻與實際開啟同一章時重複請求 */
+const inflight = new Map<string, Promise<string[]>>()
 
-interface State {
+function cacheKey(bookId: string, index: number): string {
+  return `${VERSION}:${bookId}:${index}`
+}
+
+async function translateAll(sources: string[]): Promise<string[]> {
+  const result: string[] = new Array(sources.length).fill('')
+  const queue = batchTexts(sources)
+  const worker = async () => {
+    for (let batch = queue.shift(); batch; batch = queue.shift()) {
+      const translated = await translateLines(batch.map((index) => sources[index]))
+      batch.forEach((index, i) => (result[index] = translated[i]))
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker))
+  return result
+}
+
+/** 取得一章的逐句譯文：記憶體 → IndexedDB → 網路 */
+function loadChapter(key: string, html: string): Promise<string[]> {
+  const ready = memory.get(key)
+  if (ready) return Promise.resolve(ready)
+  const pending = inflight.get(key)
+  if (pending) return pending
+
+  const job = (async () => {
+    let texts = await get<string[]>(key, store)
+    if (!texts) {
+      const doc = new DOMParser().parseFromString(html, 'text/html')
+      texts = await translateAll(chapterSentences(doc.body).map((s) => s.text))
+      await set(key, texts, store)
+    }
+    memory.set(key, texts)
+    return texts
+  })().finally(() => inflight.delete(key))
+  inflight.set(key, job)
+  return job
+}
+
+interface Status {
   key: string
-  /** 與 translatableBlocks 的順序一一對應，尚未翻到的為 undefined */
-  texts: (string | undefined)[]
-  status: TranslationStatus
+  state: 'loading' | 'error'
   error?: string
 }
 
-/** 翻譯目前這一章。分批抓取，每批回來就更新，讓畫面逐段出現譯文 */
-export function useTranslation(bookId: string | null, chapter: Chapter | null, enabled: boolean) {
-  const [state, setState] = useState<State | null>(null)
+/**
+ * 翻譯目前這一章。整章翻完才一次交出去，避免譯文分批出現讓版面一直跳；
+ * 翻好後順便在背景翻下一章，翻到下一章時就不必等。
+ */
+export function useTranslation(
+  bookId: string | null,
+  book: Book | null,
+  chapter: Chapter | null,
+  enabled: boolean,
+) {
+  const [status, setStatus] = useState<Status | null>(null)
+  const [, setVersion] = useState(0)
   const [attempt, setAttempt] = useState(0)
-  const key = enabled && bookId && chapter ? `${bookId}:${chapter.index}` : null
+  const key = enabled && bookId && chapter ? cacheKey(bookId, chapter.index) : null
   const html = chapter?.html ?? ''
+  const index = chapter?.index ?? -1
 
   useEffect(() => {
-    if (!key) return
+    if (!key || !bookId) return
     let cancelled = false
 
-    void (async () => {
-      const cached = await get<string[]>(key, store)
-      if (cancelled) return
-      if (cached) {
-        setState({ key, texts: cached, status: 'done' })
-        return
-      }
+    const prefetchNext = () => {
+      if (!book || index + 1 >= book.spine.length) return
+      void book
+        .getChapter(index + 1)
+        .then((next) => loadChapter(cacheKey(bookId, index + 1), next.html))
+        .catch(() => {
+          // 預翻失敗不打擾讀者，真的翻到那章時會重試並顯示錯誤
+        })
+    }
 
-      const doc = new DOMParser().parseFromString(html, 'text/html')
-      const sources = translatableBlocks(doc.body).map((el) => el.textContent ?? '')
-      const texts: (string | undefined)[] = new Array(sources.length).fill(undefined)
-      setState({ key, texts: [...texts], status: 'loading' })
-      try {
-        for (const batch of batchTexts(sources)) {
-          const translated = await translateBlocks(batch.map((index) => sources[index]))
-          if (cancelled) return
-          batch.forEach((index, i) => (texts[index] = translated[i]))
-          setState({ key, texts: [...texts], status: 'loading' })
-        }
-        await set(key, texts, store)
-        if (!cancelled) setState({ key, texts, status: 'done' })
-      } catch (cause) {
+    if (memory.has(key)) {
+      prefetchNext()
+      return
+    }
+    setStatus({ key, state: 'loading' })
+    loadChapter(key, html)
+      .then(() => {
+        if (cancelled) return
+        setStatus(null)
+        setVersion((n) => n + 1)
+        prefetchNext()
+      })
+      .catch((cause) => {
         if (cancelled) return
         const error = cause instanceof Error ? cause.message : String(cause)
-        setState({ key, texts: [...texts], status: 'error', error })
-      }
-    })()
+        setStatus({ key, state: 'error', error })
+      })
 
     return () => {
       cancelled = true
     }
-  }, [key, html, attempt])
+  }, [key, bookId, book, html, index, attempt])
 
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
-  // 換章或關閉後，舊章的譯文不能套到新章上
-  const current = key && state?.key === key ? state : null
+  const current = key && status?.key === key ? status : null
 
   return {
-    translations: current?.texts,
-    status: current?.status ?? null,
+    translations: key ? memory.get(key) : undefined,
+    status: current?.state ?? null,
     error: current?.error,
     retry,
   }

@@ -55,7 +55,7 @@ export function App() {
   const { settings, update: updateSettings } = useSettings()
   const { annotations, byChapter, add, update, remove } = useAnnotations(bookId ?? '')
   const english = book ? isEnglish(book.metadata.language) : false
-  const translation = useTranslation(bookId, chapter, english && settings.translate)
+  const translation = useTranslation(bookId, book, chapter, english && settings.translate)
 
   const [panel, setPanel] = useState<Panel>(null)
   const [selection, setSelection] = useState<TextSelection | null>(null)
@@ -355,7 +355,6 @@ export function App() {
             onClick={() => changeSettings({ translate: !settings.translate })}
             aria-label="沉浸式翻譯"
             aria-pressed={settings.translate}
-            data-busy={translation.status === 'loading'}
           >
             <TranslateIcon />
           </button>
@@ -426,8 +425,13 @@ export function App() {
             onPositionChange={onPositionChange}
             onUserTurn={narration.playing ? narration.seekToOffset : undefined}
           />
+          {translation.status === 'loading' && (
+            <div className="translate-status" role="status">
+              翻譯本章中…
+            </div>
+          )}
           {translation.status === 'error' && (
-            <div className="translate-error" role="alert">
+            <div className="translate-status" role="alert">
               翻譯失敗：{translation.error}
               <button onClick={translation.retry}>重試</button>
             </div>

@@ -3,7 +3,7 @@ import type { Chapter } from '../epub/parseEpub'
 import type { Annotation } from '../store/annotations'
 import type { TextSelection } from './chapterTypes'
 import { getTextOffsets, wrapRange } from './textRange'
-import { translatableBlocks } from './translate'
+import { applyTranslations, chapterSentences } from './translate'
 
 /**
  * selectionchange 的 debounce 間隔。拖曳選取控點時每個微小變動都會觸發 selectionchange，
@@ -54,15 +54,14 @@ export function useChapterContent({
     }
   }, [contentRef, chapter.html, annotations, highlightRange])
 
-  // 譯文放在屬性裡、由 CSS ::after 顯示，不插入文字節點：標註、進度、搜尋用的字元位移才不會位移
+  // 譯文由每句後面的空 span 以 CSS ::after 顯示，不插入文字：標註、進度、搜尋用的字元位移才不會跑掉
   useLayoutEffect(() => {
     const content = contentRef.current
     if (!content) return
-    translatableBlocks(content).forEach((block, index) => {
-      const text = translations?.[index]
-      if (text) block.dataset.tr = text
-      else delete block.dataset.tr
-    })
+    const sentences = chapterSentences(content)
+    // 句數對不上代表譯文不屬於這份內容，寧可不顯示也不要錯位
+    const usable = translations?.length === sentences.length ? translations : undefined
+    applyTranslations(content, sentences, usable)
   }, [contentRef, translations, chapter.html, annotations, highlightRange])
 
   // 朗讀高亮單獨處理：重設 innerHTML 會觸發重新排版，每念一句都重排太浪費

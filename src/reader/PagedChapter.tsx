@@ -60,7 +60,7 @@ export function PagedChapter({
 
   /**
    * 重新量測分頁，並停在 target 指定的位置。
-   * reflow 代表只是內容重排（圖片、譯文載入），不重播換章的入場動畫
+   * reflow 代表只是內容重排（圖片、譯文載入），不重設換章的入場位移
    */
   const relayout = useCallback((target: Entry, reflow = false) => {
     const viewport = viewportRef.current
@@ -88,8 +88,9 @@ export function PagedChapter({
     anchorRef.current =
       target.kind === 'offset' ? target.offset : charOffsetAtPage(content, clamped, measured)
     setPage(clamped)
-    if (reflow) return
+    // 重排後頁碼可能變了，直接跳到定位，不要滑過去
     setAnimate(false)
+    if (reflow) return
     setEnterOffset(
       target.slide === 'forward'
         ? measured.pageWidth + measured.gap
