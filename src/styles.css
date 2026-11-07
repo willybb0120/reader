@@ -82,6 +82,8 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 100dvh;
+  /* 書櫃轉盤撐滿 100vw，有直向捲軸時會多出捲軸寬度，剪掉才不會出現水平捲動 */
+  overflow-x: clip;
 }
 
 /* 閱讀時整個畫面固定，不捲動：翻頁靠水平位移 */
@@ -1009,84 +1011,157 @@ button {
   color: var(--ink-faint);
 }
 
-.library__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
-  gap: 1.75rem 1.25rem;
+.library__search {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: 22rem;
+  margin: 0 auto 0.5rem;
+}
+
+.library__search input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.55rem 1rem;
+  font: inherit;
+  font-size: 0.9375rem;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.library__search input:focus {
+  border-color: var(--accent);
+}
+
+.library__count {
+  font-size: 0.8125rem;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+/* ---------- 書櫃 3D 轉盤 ---------- */
+
+/* 轉盤比書櫃欄寬還寬，撐滿整個視窗，兩側的書才不會被切掉 */
+.carousel {
+  position: relative;
+  width: 100vw;
+  margin-inline: calc(50% - 50vw);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.carousel__stage {
+  position: relative;
+  height: calc(var(--cover-h) * 1.75);
+  perspective: 1100px;
+  perspective-origin: 50% 40%;
+  cursor: grab;
+  /* 橫向拖曳交給轉盤，直向仍可捲動頁面 */
+  touch-action: pan-y;
+}
+
+.carousel__stage:active {
+  cursor: grabbing;
+}
+
+.carousel__ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-style: preserve-3d;
 }
 
 .book-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
+  position: absolute;
+  left: calc(var(--cover-w) / -2);
+  top: calc(var(--cover-h) / -2);
+  width: var(--cover-w);
+  height: var(--cover-h);
+  transform-style: preserve-3d;
+  will-change: transform, opacity;
 }
 
 .book-card__open {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  display: block;
+  width: 100%;
+  height: 100%;
   padding: 0;
-  text-align: start;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .book-card__frame {
   position: relative;
   display: block;
+  height: 100%;
+  border-radius: 3px 6px 6px 3px;
+  -webkit-box-reflect: below 6px linear-gradient(transparent 70%, rgb(255 255 255 / 20%));
 }
 
 .book-card__cover {
   display: block;
   width: 100%;
-  aspect-ratio: 2 / 3;
+  height: 100%;
   object-fit: cover;
   background: var(--paper-raised);
-  border-radius: 4px;
-  box-shadow: var(--shadow);
-  transition: transform 0.18s cubic-bezier(0.22, 0.8, 0.3, 1);
+  border-radius: inherit;
+  box-shadow:
+    0 2px 4px rgb(35 32 28 / 18%),
+    0 18px 40px -12px rgb(35 32 28 / calc(var(--lift, 0) * 45% + 15%));
+  pointer-events: none;
 }
 
-.book-card__open:hover .book-card__cover {
-  transform: translateY(-3px);
+/* 書背壓痕，以及正前方那本的一道反光 */
+.book-card__frame::before,
+.book-card__frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.book-card__frame::before {
+  right: auto;
+  width: 8%;
+  background: linear-gradient(90deg, rgb(0 0 0 / 20%), rgb(255 255 255 / 10%) 55%, rgb(0 0 0 / 5%));
+}
+
+.book-card__frame::after {
+  background: linear-gradient(
+    115deg,
+    transparent 40%,
+    rgb(255 255 255 / calc(var(--lift, 0) * 18%)) 50%,
+    transparent 60%
+  );
 }
 
 .book-card__cover--blank {
-  display: grid;
-  place-items: center;
-  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 14% 12% 10%;
+  background: linear-gradient(160deg, var(--blank), color-mix(in srgb, var(--blank) 70%, black));
+  color: #fbf7f0;
+  text-align: start;
+}
+
+.book-card__blank-title {
   font-family: var(--serif);
-  font-size: 0.9375rem;
-  line-height: 1.6;
-  color: var(--ink-soft);
-  text-align: center;
+  font-size: calc(var(--cover-w) * 0.11);
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
-.book-card__title {
-  font-family: var(--serif);
-  font-size: 0.9375rem;
-  line-height: 1.5;
-  color: var(--ink);
-}
-
-.book-card__creator {
-  font-size: 0.75rem;
-  color: var(--ink-faint);
-}
-
-.book-card__remove {
-  position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
-  padding: 0.25rem 0.55rem;
-  font-size: 0.75rem;
-  color: var(--paper-raised);
-  background: rgb(35 32 28 / 55%);
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.book-card:hover .book-card__remove,
-.book-card__remove:focus-visible {
-  opacity: 1;
+.book-card__blank-creator {
+  font-size: calc(var(--cover-w) * 0.065);
+  opacity: 0.8;
 }
 
 .book-card__progress {
@@ -1099,6 +1174,85 @@ button {
   color: var(--paper-raised);
   background: rgb(35 32 28 / 62%);
   border-radius: 4px;
+  opacity: var(--lift, 0);
+}
+
+.carousel__info {
+  margin-top: 0.5rem;
+  text-align: center;
+  animation: carousel-info 0.25s ease;
+}
+
+@keyframes carousel-info {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.carousel__title {
+  padding-inline: 1.5rem;
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.carousel__meta {
+  margin-top: 0.35rem;
+  font-size: 0.8125rem;
+  color: var(--ink-soft);
+}
+
+.carousel__bar {
+  width: 7.5rem;
+  height: 3px;
+  margin: 0.75rem auto 0;
+  overflow: hidden;
+  background: var(--rule);
+  border-radius: 2px;
+}
+
+.carousel__bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.carousel__remove {
+  margin-top: 1rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--ink-faint);
+}
+
+.carousel__remove:hover {
+  color: var(--ink-soft);
+  text-decoration: underline;
+}
+
+.carousel__dots {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 5px;
+  height: 18px;
+  margin-top: 1.5rem;
+}
+
+.carousel__dots span {
+  width: 3px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--ink-faint);
+  opacity: 0.35;
+  transition: height 0.2s, opacity 0.2s, background 0.2s;
+}
+
+.carousel__dots span[data-on='true'] {
+  height: 16px;
+  opacity: 1;
+  background: var(--accent);
 }
 
 /* ---------- 快捷鍵說明 ---------- */

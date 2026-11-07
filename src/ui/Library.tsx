@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { BookRecord } from '../store/library'
-import { loadProgress } from '../store/progress'
+import { BookCarousel } from './BookCarousel'
+import { filterBooks } from './carousel'
 
 interface LibraryProps {
   books: BookRecord[] | null
@@ -10,19 +11,11 @@ interface LibraryProps {
   onRemove: (id: string) => void
 }
 
-function CoverImage({ book }: { book: BookRecord }) {
-  const url = useMemo(
-    () => (book.cover ? URL.createObjectURL(new Blob([book.cover.data], { type: book.cover.type })) : null),
-    [book],
-  )
-  useEffect(() => () => void (url && URL.revokeObjectURL(url)), [url])
-
-  if (!url) return <div className="book-card__cover book-card__cover--blank">{book.title}</div>
-  return <img className="book-card__cover" src={url} alt="" />
-}
-
 export function Library({ books, error, onOpen, onImport, onRemove }: LibraryProps) {
   const [dragging, setDragging] = useState(false)
+  const [query, setQuery] = useState('')
+  // 搜尋結果要記住識別，否則每次重繪都是新陣列，轉盤會被重設回第一本
+  const shown = useMemo(() => (books ? filterBooks(books, query) : []), [books, query])
 
   return (
     <div
@@ -63,32 +56,27 @@ export function Library({ books, error, onOpen, onImport, onRemove }: LibraryPro
         </p>
       )}
 
-      {books && books.length > 0 && (
-        <div className="library__grid">
-          {books.map((book) => {
-            const percent = Math.round((loadProgress(book.id)?.overall ?? 0) * 100)
-            return (
-              <div key={book.id} className="book-card">
-                <button className="book-card__open" onClick={() => onOpen(book.id)}>
-                  <span className="book-card__frame">
-                    <CoverImage book={book} />
-                    {percent > 0 && <span className="book-card__progress">{percent}%</span>}
-                  </span>
-                  <span className="book-card__title">{book.title}</span>
-                  {book.creator && <span className="book-card__creator">{book.creator}</span>}
-                </button>
-                <button
-                  className="book-card__remove"
-                  onClick={() => onRemove(book.id)}
-                  aria-label={`從書櫃移除 ${book.title}`}
-                >
-                  移除
-                </button>
-              </div>
-            )
-          })}
+      {books && books.length > 1 && (
+        <div className="library__search">
+          <input
+            type="search"
+            value={query}
+            placeholder="搜尋書名或作者"
+            aria-label="搜尋書櫃"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setQuery('')
+            }}
+          />
+          {query.trim() && <span className="library__count">{shown.length} 本</span>}
         </div>
       )}
+
+      {books && books.length > 0 && shown.length === 0 && (
+        <p className="library__empty">找不到符合「{query.trim()}」的書</p>
+      )}
+
+      {shown.length > 0 && <BookCarousel books={shown} onOpen={onOpen} onRemove={onRemove} />}
     </div>
   )
 }
